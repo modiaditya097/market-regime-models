@@ -174,8 +174,9 @@ def load_all_data(cfg: dict) -> dict:
         vix_aligned = macro_raw["vix"].reindex(total.index, method="ffill")
         macro = {"vix": vix_aligned, "y2": y2_aligned, "y10": y10_aligned}
 
-        # Drop any dates with NaN in core data
-        valid = total.notna().all(axis=1) & active.notna().all(axis=1)
+        # Drop any dates with NaN in core data or macro series
+        macro_valid = pd.concat(list(macro.values()), axis=1).notna().all(axis=1)
+        valid = total.notna().all(axis=1) & active.notna().all(axis=1) & macro_valid
         total, active, rf = total[valid], active[valid], rf[valid]
         for k in macro:
             macro[k] = macro[k][valid]
