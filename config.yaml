@@ -1,0 +1,30 @@
+data:
+  start_date: "2000-01-01"
+  end_date: "2026-01-30"
+  cache_dir: "outputs/cache"
+  refresh: false
+
+training:
+  min_train_years: 8
+  max_train_years: 12
+  refit_freq: "M"
+
+sjm:
+  n_components: 2
+  jump_penalty: 50.0
+  max_feats: 9.5
+  max_iter: 30
+  n_init_jm: 10
+  random_state: 42
+
+black_litterman:
+  risk_aversion: 2.5
+  cov_halflife: 126
+  tau: 0.05
+  target_tracking_error: 0.03
+  transaction_cost_bps: 5
+  benchmark_rebalance_freq: "Q"
+
+output:
+  results_path: "outputs/results.csv"
+  plots_dir: "outputs/plots"
