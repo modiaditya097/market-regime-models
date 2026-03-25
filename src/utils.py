@@ -41,6 +41,8 @@ def info_ratio(active_ret: pd.Series) -> float:
 
 
 def max_drawdown(ret_ser: pd.Series) -> float:
+    if len(ret_ser) == 0:
+        return 0.0
     cum = (1 + ret_ser).cumprod()
     rolling_max = cum.cummax()
     drawdown = (cum - rolling_max) / rolling_max
