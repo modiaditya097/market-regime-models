@@ -55,18 +55,20 @@ def _parse_ken_french_csv(content: str, columns: list) -> pd.DataFrame:
     df = pd.read_csv(io.StringIO("\n".join(data_lines)), header=None)
     df[0] = pd.to_datetime(df[0].astype(str).str.strip(), format="%Y%m%d")
     df = df.set_index(0)
+    df.index.name = "date"
     df.columns = columns
-    return df.astype(float) / 100.0   # percent → decimal
+    return df.astype(float) / 100.0   # percent -> decimal
 
 
 def _parse_fred_csv(content: str) -> pd.Series:
-    """Parse a FRED CSV string. Missing values ('.') become NaN."""
-    df = pd.read_csv(
-        io.StringIO(content),
-        parse_dates=["DATE"],
-        index_col="DATE",
-        na_values=["."],
-    )
+    """Parse a FRED CSV string. Missing values ('.') become NaN.
+    FRED uses 'observation_date' as the date column (formerly 'DATE').
+    """
+    df = pd.read_csv(io.StringIO(content), na_values=["."])
+    # Handle both old ('DATE') and current ('observation_date') FRED column names
+    date_col = next(c for c in df.columns if "date" in c.lower())
+    df[date_col] = pd.to_datetime(df[date_col])
+    df = df.set_index(date_col)
     return df.iloc[:, 0].astype(float)
 
 

@@ -2,8 +2,14 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
-outputs/cache/
+outputs/
 *.egg-info/
 .eggs/
 dist/
 build/
+.claude/
+.superpowers/
+docs/superpowers/
+jump-models-author/
+*.pdf
+*.pptx
