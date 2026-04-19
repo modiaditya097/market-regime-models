@@ -91,6 +91,8 @@ def save_returns_csv(
 ) -> None:
     """Save daily return series to CSV for the Shiny app comparison tab."""
     idx = port_ret.dropna().index
+    assert not mkt_ret.reindex(idx).isna().any(), "mkt_ret has NaNs on portfolio index"
+    assert not ew_ret.reindex(idx).isna().any(), "ew_ret has NaNs on portfolio index"
     df = pd.DataFrame({
         "date": idx,
         "portfolio": port_ret.reindex(idx).values,
