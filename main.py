@@ -28,6 +28,7 @@ from src.backtest import (
     plot_cumulative_returns,
     plot_regime,
     plot_portfolio_weights,
+    save_returns_csv,          # ← add this line
 )
 
 
@@ -51,7 +52,7 @@ def main():
     rf         = data["rf"]
     macro      = data["macro"]
     active_rets_dict = {f: active_ret[f] for f in FACTORS}
-    print(f"      Data: {total_ret.index[0].date()} → {total_ret.index[-1].date()} "
+    print(f"      Data: {total_ret.index[0].date()} -> {total_ret.index[-1].date()} "
           f"({len(total_ret)} trading days)")
 
     # ── Step 2: Features ─────────────────────────────────────────────────────
@@ -142,23 +143,10 @@ def main():
     # Save results table
     save_results(metrics_rows, cfg["output"]["results_path"])
 
-    # Use TE=3% for plots
-    cfg_3pct = dict(cfg)
-    cfg_3pct["black_litterman"] = dict(cfg["black_litterman"])
-    cfg_3pct["black_litterman"]["target_tracking_error"] = 0.03
-    weights_3pct = run_portfolio_construction(
-        regime_labels, in_sample_labels,
-        total_returns=total_ret, active_returns=active_ret, cfg=cfg_3pct,
-    )
-    port_ret_3pct = compute_portfolio_returns(
-        weights_3pct.reindex(weights.index, fill_value=1.0/len(ASSETS)),
-        total_ret.reindex(weights.index),
-        cost_bps=cost_bps,
-    )
-
     plots_dir = cfg["output"]["plots_dir"]
-    plot_cumulative_returns(port_ret_3pct, mkt_ret, ew_ret, rf_test, plots_dir,
-                            label="Dynamic Allocation (TE=3%)")
+    output_dir = os.path.dirname(cfg["output"]["results_path"])
+
+    # Regime plots are TE-independent — save once
     for factor in FACTORS:
         plot_regime(
             active_ret[factor].reindex(weights.index),
@@ -166,7 +154,30 @@ def main():
             factor,
             plots_dir,
         )
-    plot_portfolio_weights(weights_3pct.reindex(weights.index), plots_dir)
+
+    # Per-TE plots and return series
+    for te in te_targets:
+        suffix = f"_te{int(te * 100)}"
+        cfg_te = dict(cfg)
+        cfg_te["black_litterman"] = dict(cfg["black_litterman"])
+        cfg_te["black_litterman"]["target_tracking_error"] = te
+
+        weights_te = run_portfolio_construction(
+            regime_labels, in_sample_labels,
+            total_returns=total_ret, active_returns=active_ret, cfg=cfg_te,
+        )
+        port_ret_te = compute_portfolio_returns(
+            weights_te.reindex(weights.index, fill_value=1.0 / len(ASSETS)),
+            total_ret.reindex(weights.index),
+            cost_bps=cost_bps,
+        )
+        plot_cumulative_returns(
+            port_ret_te, mkt_ret, ew_ret, rf_test, plots_dir,
+            label=f"Dynamic Allocation (TE={int(te * 100)}%)",
+            te_suffix=suffix,
+        )
+        plot_portfolio_weights(weights_te.reindex(weights.index), plots_dir, te_suffix=suffix)
+        save_returns_csv(port_ret_te, mkt_ret, ew_ret, output_dir, te_suffix=suffix)
 
     print("\nDone. Results in outputs/")
     print("\n--- Performance Summary ---")
