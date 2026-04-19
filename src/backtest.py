@@ -82,6 +82,27 @@ def save_results(metrics_rows: list, output_path: str) -> None:
     print(f"Results saved to {output_path}")
 
 
+def save_returns_csv(
+    port_ret: pd.Series,
+    mkt_ret: pd.Series,
+    ew_ret: pd.Series,
+    output_dir: str,
+    te_suffix: str,
+) -> None:
+    """Save daily return series to CSV for the Shiny app comparison tab."""
+    idx = port_ret.dropna().index
+    df = pd.DataFrame({
+        "date": idx,
+        "portfolio": port_ret.reindex(idx).values,
+        "market": mkt_ret.reindex(idx).values,
+        "ew": ew_ret.reindex(idx).values,
+    })
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, f"returns{te_suffix}.csv")
+    df.to_csv(path, index=False)
+    print(f"Saved {path}")
+
+
 def plot_cumulative_returns(
     port_ret: pd.Series,
     mkt_ret: pd.Series,
@@ -89,6 +110,7 @@ def plot_cumulative_returns(
     rf: pd.Series,
     output_dir: str,
     label: str = "Dynamic Allocation",
+    te_suffix: str = "",
 ) -> None:
     idx = port_ret.dropna().index
     cum = lambda r: (1 + r.reindex(idx) - rf.reindex(idx)).cumprod() - 1
@@ -104,7 +126,7 @@ def plot_cumulative_returns(
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     os.makedirs(output_dir, exist_ok=True)
-    path = os.path.join(output_dir, "cumulative_returns.png")
+    path = os.path.join(output_dir, f"cumulative_returns{te_suffix}.png")
     plt.savefig(path, dpi=150)
     plt.close()
     print(f"Saved {path}")
@@ -144,7 +166,7 @@ def plot_regime(
     print(f"Saved {path}")
 
 
-def plot_portfolio_weights(weights: pd.DataFrame, output_dir: str) -> None:
+def plot_portfolio_weights(weights: pd.DataFrame, output_dir: str, te_suffix: str = "") -> None:
     fig, ax = plt.subplots(figsize=(12, 5))
     ax.stackplot(
         weights.index,
@@ -158,7 +180,7 @@ def plot_portfolio_weights(weights: pd.DataFrame, output_dir: str) -> None:
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     os.makedirs(output_dir, exist_ok=True)
-    path = os.path.join(output_dir, "portfolio_weights.png")
+    path = os.path.join(output_dir, f"portfolio_weights{te_suffix}.png")
     plt.savefig(path, dpi=150)
     plt.close()
     print(f"Saved {path}")
