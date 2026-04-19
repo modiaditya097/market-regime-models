@@ -1,18 +1,16 @@
 """SJM + Black-Litterman model tab (Layout C: sticky sidebar + scrollable sections)."""
 
+import asyncio
+import re
 from pathlib import Path
-
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
 from shiny import module, ui, render, reactive
 
 from shiny_app.components.charts import img_tag, load_metrics_row, load_returns_df, _DISPLAY_COLS
 from shiny_app.components.layout import placeholder_card, section
-from shiny_app.utils.runner import run_pipeline
 
 _FACTORS = ["value", "size", "quality", "growth", "momentum"]
+_STEP_RE = re.compile(r"\[(\d+)/(\d+)\](.*)$")
 
 _SIDEBAR_CSS = """
 <style>
@@ -48,6 +46,7 @@ def model_tab_ui(cfg: dict):
             class_="btn-primary btn-sm w-100 mt-2",
             disabled=cfg.get("run_command") is None,
         ),
+        ui.output_ui("run_progress"),
         ui.output_ui("run_status"),
         width=200,
         class_="model-sidebar",
@@ -72,18 +71,80 @@ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
 
     running = reactive.value(False)
     run_log = reactive.value("")
+    progress_pct = reactive.value(0)
+    step_msg = reactive.value("")
 
     @reactive.effect
     @reactive.event(input.rerun)
-    def _launch_pipeline():
+    async def _launch_pipeline():
         if run_cmd is None or running():
             return
         running.set(True)
-        run_log.set("Running pipeline...")
-        proc = run_pipeline(run_cmd, project_root)
-        stdout, _ = proc.communicate()
-        run_log.set(stdout[-2000:] if stdout else "Done.")
-        running.set(False)
+        run_log.set("")
+        progress_pct.set(0)
+        step_msg.set("Starting...")
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *run_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=str(project_root),
+            )
+            lines = []
+            async for raw in proc.stdout:
+                line = raw.decode("utf-8", errors="replace").rstrip()
+                lines.append(line)
+                m = _STEP_RE.search(line)
+                if m:
+                    current, total, desc = int(m.group(1)), int(m.group(2)), m.group(3).strip()
+                    progress_pct.set(int(current / total * 100))
+                    step_msg.set(f"[{current}/{total}] {desc}")
+            await proc.wait()
+            if proc.returncode == 0:
+                progress_pct.set(100)
+                step_msg.set("Complete")
+                run_log.set("Pipeline finished successfully.")
+            else:
+                step_msg.set("Failed")
+                run_log.set("\n".join(lines[-20:]))
+        except Exception as exc:
+            step_msg.set("Error")
+            run_log.set(str(exc))
+        finally:
+            running.set(False)
+
+    @render.ui
+    def run_progress():
+        if not running() and progress_pct() == 0:
+            return ui.div()
+        pct = progress_pct()
+        msg = step_msg()
+        is_running = running()
+        bar_class = "progress-bar progress-bar-striped progress-bar-animated" if is_running else "progress-bar"
+        status_color = "#198754" if pct == 100 else ("#dc3545" if msg == "Failed" else "#0d6efd")
+        indicator = ui.div(
+            ui.tags.span(
+                "● Running" if is_running else ("✓ Done" if pct == 100 else "✗ Failed"),
+                style=f"font-size:.75rem;color:{status_color};font-weight:600",
+            ),
+            class_="mt-2",
+        )
+        return ui.div(
+            indicator,
+            ui.div(
+                ui.div(
+                    class_=bar_class,
+                    role="progressbar",
+                    style=f"width:{pct}%",
+                    **{"aria-valuenow": str(pct), "aria-valuemin": "0", "aria-valuemax": "100"},
+                ),
+                class_="progress mt-1",
+                style="height:8px",
+            ),
+            ui.div(msg, style="font-size:.7rem;color:#6c757d;margin-top:2px") if msg else ui.div(),
+            class_="mt-2",
+        )
 
     @render.ui
     def run_status():
@@ -91,7 +152,7 @@ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
         if not log:
             return ui.div()
         return ui.div(
-            ui.tags.pre(log, style="font-size:.7rem;max-height:150px;overflow-y:auto"),
+            ui.tags.pre(log, style="font-size:.7rem;max-height:120px;overflow-y:auto"),
             class_="mt-2",
         )
 
