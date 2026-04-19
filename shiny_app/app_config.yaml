@@ -1,0 +1,21 @@
+models:
+  - id: model1
+    name: "Dynamic Factor Allocation (SJM+BL)"
+    output_dir: "outputs"
+    module: "shiny_app.modules.model1"
+    te_targets: [0.01, 0.02, 0.03, 0.04]
+    run_command: ["python", "main.py"]
+
+  - id: model2
+    name: "Model 2"
+    output_dir: "outputs/model2"
+    module: "shiny_app.modules.model2"
+    te_targets: [0.03]
+    run_command: null
+
+  - id: model3
+    name: "Model 3"
+    output_dir: "outputs/model3"
+    module: "shiny_app.modules.model3"
+    te_targets: [0.03]
+    run_command: null
