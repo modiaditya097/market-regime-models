@@ -12,3 +12,27 @@ models:
     module: "shiny_app.modules.model3"
     te_targets: [0.03]
     run_command: null
+
+  - id: hmm
+    name: "HMM (S&P 500)"
+    description: "5-state multi-feature Hidden Markov Model. Training: 2013–2022. Test: 2023–2024."
+    output_dir: "outputs/hmm"
+    module: "shiny_app.modules.generic_model_tab"
+    te_targets: [0.03]
+    run_command: null
+
+  - id: hsmm
+    name: "HSMM (S&P 500)"
+    description: "5-state Hidden Semi-Markov Model with explicit duration modeling. Training: 2013–2022. Test: 2023–2024."
+    output_dir: "outputs/hsmm"
+    module: "shiny_app.modules.generic_model_tab"
+    te_targets: [0.03]
+    run_command: null
+
+  - id: msgarch
+    name: "MS-GARCH (S&P 500)"
+    description: "Markov-Switching GARCH model with volatility-based regime switching. Training: 2013–2022. Test: 2023–2024."
+    output_dir: "outputs/msgarch"
+    module: "shiny_app.modules.generic_model_tab"
+    te_targets: [0.03]
+    run_command: null
