@@ -4,11 +4,24 @@ import asyncio
 import re
 from pathlib import Path
 
+import pandas as pd
 import yaml as _yaml
 
 from shiny import module, ui, render, reactive
 
-from shiny_app.components.charts import img_tag, load_metrics_row, load_returns_df, _DISPLAY_COLS
+from shiny_app.components.analytics import (
+    load_weights_df,
+    load_regimes_df,
+    load_all_metrics,
+    cumulative_returns_plot  as _cum_returns_chart,
+    rolling_sharpe_plot      as _rolling_sharpe_chart,
+    drawdown_plot            as _drawdown_chart,
+    realized_te_plot         as _realized_te_chart,
+    portfolio_weights_plot   as _weights_chart,
+    regime_plot              as _regime_chart,
+    _metrics_comparison_html,
+)
+from shiny_app.components.charts import load_returns_df
 from shiny_app.components.layout import placeholder_card, section
 
 _FACTORS = ["value", "size", "quality", "growth", "momentum"]
@@ -48,10 +61,13 @@ def model_tab_ui(cfg: dict):
         ui.div(
             ui.tags.b("Sections"),
             ui.div(
-                ui.tags.a("Metrics", href="#metrics"),
-                ui.tags.a("Cumulative Returns", href="#returns"),
-                ui.tags.a("Portfolio Weights", href="#weights"),
-                ui.tags.a("Regime Plots", href="#regimes"),
+                ui.tags.a("Metrics",              href="#metrics"),
+                ui.tags.a("Cumulative Returns",   href="#returns"),
+                ui.tags.a("Rolling Sharpe",       href="#rolling-sharpe"),
+                ui.tags.a("Drawdown",             href="#drawdown"),
+                ui.tags.a("Realized TE",          href="#realized-te"),
+                ui.tags.a("Portfolio Weights",    href="#weights"),
+                ui.tags.a("Regime Plots",         href="#regimes"),
                 class_="anchor-links",
             ),
             class_="mb-3",
@@ -80,10 +96,27 @@ def model_tab_ui(cfg: dict):
     )
 
     main = ui.div(
-        section("Performance Metrics", "metrics", ui.output_table("metrics_tbl")),
-        section("Cumulative Returns", "returns", ui.output_ui("returns_img")),
-        section("Portfolio Weights", "weights", ui.output_ui("weights_img")),
-        section("Regime Plots", "regimes", ui.output_ui("regime_imgs")),
+        section("Performance Metrics",     "metrics",
+                ui.output_ui("metrics_tbl")),
+        section("Cumulative Returns",      "returns",
+                ui.output_plot("returns_plot", height="350px")),
+        section("Rolling Sharpe",          "rolling-sharpe",
+                ui.output_plot("rolling_sharpe_plot", height="300px")),
+        section("Drawdown",                "drawdown",
+                ui.output_plot("drawdown_plot", height="300px")),
+        section("Realized Tracking Error", "realized-te",
+                ui.output_plot("realized_te_plot", height="300px")),
+        section("Portfolio Weights",       "weights",
+                ui.output_plot("weights_plot", height="350px")),
+        section("Regime Plots",            "regimes",
+                ui.div(*[
+                    ui.div(
+                        ui.h6(f.capitalize(), class_="text-muted"),
+                        ui.output_plot(f"regime_{f}_plot", height="250px"),
+                        class_="mb-3",
+                    )
+                    for f in _FACTORS
+                ])),
         style="padding:1rem",
     )
 
@@ -92,7 +125,6 @@ def model_tab_ui(cfg: dict):
 
 @module.server
 def model_tab_server(input, output, session, cfg: dict, project_root: Path):
-    import pandas as pd
     output_dir = Path(cfg["output_dir"])
     run_cmd = cfg.get("run_command")
 
@@ -197,40 +229,44 @@ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
             class_="mt-2",
         )
 
-    @render.table
+    @render.ui
     def metrics_tbl():
-        te = int(input.te())
-        df = load_metrics_row(output_dir, te_pct=te)
-        if df.empty:
-            return pd.DataFrame({"Status": ["No results — run the model first"]})
-        return df.rename(columns=_DISPLAY_COLS)
+        df = load_all_metrics(output_dir)
+        return ui.HTML(_metrics_comparison_html(df, selected_te=int(input.te())))
 
-    @render.ui
-    def returns_img():
-        te = int(input.te())
-        path = output_dir / f"plots/cumulative_returns_te{te}.png"
-        if not path.exists():
-            return placeholder_card(f"Cumulative returns plot not found (TE={te}%).")
-        return img_tag(path, alt=f"Cumulative returns TE={te}%")
+    @render.plot(alt="Cumulative returns")
+    def returns_plot():
+        df = load_returns_df(output_dir, te_pct=int(input.te()))
+        return _cum_returns_chart(df)
 
-    @render.ui
-    def weights_img():
-        te = int(input.te())
-        path = output_dir / f"plots/portfolio_weights_te{te}.png"
-        if not path.exists():
-            return placeholder_card(f"Portfolio weights plot not found (TE={te}%).")
-        return img_tag(path, alt=f"Portfolio weights TE={te}%")
+    @render.plot(alt="Portfolio weights")
+    def weights_plot():
+        wdf = load_weights_df(output_dir, te_pct=int(input.te()))
+        return _weights_chart(wdf)
 
-    @render.ui
-    def regime_imgs():
-        imgs = []
-        for factor in _FACTORS:
-            path = output_dir / f"plots/regime_{factor}.png"
-            imgs.append(
-                ui.div(
-                    ui.h6(factor.capitalize(), class_="text-muted"),
-                    img_tag(path, alt=f"{factor} regime"),
-                    class_="mb-3",
-                )
-            )
-        return ui.div(*imgs)
+    @render.plot(alt="Rolling Sharpe")
+    def rolling_sharpe_plot():
+        df = load_returns_df(output_dir, te_pct=int(input.te()))
+        return _rolling_sharpe_chart(df)
+
+    @render.plot(alt="Drawdown")
+    def drawdown_plot():
+        df = load_returns_df(output_dir, te_pct=int(input.te()))
+        return _drawdown_chart(df)
+
+    @render.plot(alt="Realized TE")
+    def realized_te_plot():
+        df = load_returns_df(output_dir, te_pct=int(input.te()))
+        return _realized_te_chart(df, target_te=int(input.te()) / 100)
+
+    def _make_regime_renderer(f: str):
+        @output(id=f"regime_{f}_plot")
+        @render.plot(alt=f"{f} regime")
+        def _regime():
+            reg    = load_regimes_df(output_dir)
+            active = pd.read_parquet(output_dir / "cache" / "active_returns.parquet")
+            return _regime_chart(f, reg, active)
+        return _regime
+
+    for _f in _FACTORS:
+        _make_regime_renderer(_f)
