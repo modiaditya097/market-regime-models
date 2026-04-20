@@ -26,7 +26,12 @@ def comparison_ui(all_cfg: dict):
     return ui.div(
         ui.div(
             ui.input_select("te", "TE Target", choices=te_choices, selected=default_te),
-            style="max-width:200px;margin-bottom:1rem",
+            ui.p(
+                ui.tags.em("TE target applies to Model 1 only. "
+                           "Other models display their single pre-computed series."),
+                style="font-size:.8rem;color:#6c757d;margin-top:4px",
+            ),
+            style="max-width:400px;margin-bottom:1rem",
         ),
         ui.h5("Cumulative Returns — All Models"),
         ui.output_plot("overlay_chart", height="400px"),
@@ -44,6 +49,7 @@ def comparison_server(input, output, session, all_cfg: dict):
         te = int(input.te())
         fig, ax = plt.subplots(figsize=(12, 5))
         plotted = False
+        market_series = None
 
         for i, model_cfg in enumerate(all_cfg["models"]):
             df = load_returns_df(Path(model_cfg["output_dir"]), te_pct=te)
@@ -53,12 +59,19 @@ def comparison_server(input, output, session, all_cfg: dict):
             ax.plot(cum.index, cum * 100, label=model_cfg["name"],
                     color=_COLORS[i % len(_COLORS)], linewidth=1.5)
             plotted = True
+            if market_series is None and "market" in df.columns:
+                market_series = df["market"]
 
         if not plotted:
             ax.text(0.5, 0.5, "No model outputs available",
                     transform=ax.transAxes, ha="center", va="center",
                     fontsize=12, color="grey")
         else:
+            if market_series is not None:
+                cum_mkt = (1 + market_series).cumprod() - 1
+                ax.plot(cum_mkt.index, cum_mkt * 100,
+                        label="Market (S&P 500)", color="#888888",
+                        linewidth=1.2, linestyle="--")
             ax.axhline(0, color="black", linewidth=0.5)
             ax.set_ylabel("Cumulative Excess Return (%)")
             ax.legend()
