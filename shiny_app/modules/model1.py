@@ -21,7 +21,7 @@ from shiny_app.components.analytics import (
     regime_plot              as _regime_chart,
     _metrics_comparison_html,
 )
-from shiny_app.components.charts import load_returns_df
+from shiny_app.components.charts import load_returns_df, fig_to_img
 from shiny_app.components.layout import placeholder_card, section
 
 _FACTORS = ["value", "size", "quality", "growth", "momentum"]
@@ -99,20 +99,20 @@ def model_tab_ui(cfg: dict):
         section("Performance Metrics",     "metrics",
                 ui.output_ui("metrics_tbl")),
         section("Cumulative Returns",      "returns",
-                ui.output_plot("returns_plot", height="350px")),
+                ui.output_ui("returns_plot")),
         section("Rolling Sharpe",          "rolling-sharpe",
-                ui.output_plot("rolling_sharpe_plot", height="300px")),
+                ui.output_ui("rolling_sharpe_plot")),
         section("Drawdown",                "drawdown",
-                ui.output_plot("drawdown_plot", height="300px")),
+                ui.output_ui("drawdown_plot")),
         section("Realized Tracking Error", "realized-te",
-                ui.output_plot("realized_te_plot", height="300px")),
+                ui.output_ui("realized_te_plot")),
         section("Portfolio Weights",       "weights",
-                ui.output_plot("weights_plot", height="350px")),
+                ui.output_ui("weights_plot")),
         section("Regime Plots",            "regimes",
                 ui.div(*[
                     ui.div(
                         ui.h6(f.capitalize(), class_="text-muted"),
-                        ui.output_plot(f"regime_{f}_plot", height="250px"),
+                        ui.output_ui(f"regime_{f}_plot"),
                         class_="mb-3",
                     )
                     for f in _FACTORS
@@ -234,42 +234,41 @@ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
         df = load_all_metrics(output_dir)
         return ui.HTML(_metrics_comparison_html(df, selected_te=int(input.te())))
 
-    @render.plot(alt="Cumulative returns")
+    @render.ui
     def returns_plot():
         df = load_returns_df(output_dir, te_pct=int(input.te()))
-        return _cum_returns_chart(df)
+        return fig_to_img(_cum_returns_chart(df), alt="Cumulative returns")
 
-    @render.plot(alt="Portfolio weights")
+    @render.ui
     def weights_plot():
         wdf = load_weights_df(output_dir, te_pct=int(input.te()))
-        return _weights_chart(wdf)
+        return fig_to_img(_weights_chart(wdf), alt="Portfolio weights")
 
-    @render.plot(alt="Rolling Sharpe")
+    @render.ui
     def rolling_sharpe_plot():
         df = load_returns_df(output_dir, te_pct=int(input.te()))
-        return _rolling_sharpe_chart(df)
+        return fig_to_img(_rolling_sharpe_chart(df), alt="Rolling Sharpe")
 
-    @render.plot(alt="Drawdown")
+    @render.ui
     def drawdown_plot():
         df = load_returns_df(output_dir, te_pct=int(input.te()))
-        return _drawdown_chart(df)
+        return fig_to_img(_drawdown_chart(df), alt="Drawdown")
 
-    @render.plot(alt="Realized TE")
+    @render.ui
     def realized_te_plot():
         df = load_returns_df(output_dir, te_pct=int(input.te()))
-        return _realized_te_chart(df, target_te=int(input.te()) / 100)
+        return fig_to_img(_realized_te_chart(df, target_te=int(input.te()) / 100), alt="Realized TE")
 
     def _make_regime_renderer(f: str):
         @output(id=f"regime_{f}_plot")
-        @render.plot(alt=f"{f} regime")
+        @render.ui
         def _regime():
             reg          = load_regimes_df(output_dir)
             parquet_path = output_dir / "cache" / "active_returns.parquet"
             if not parquet_path.exists():
-                from shiny_app.components.analytics import _blank_fig
-                return _blank_fig("Run the model to generate regime data")
+                return ui.p("Run the model to generate regime data", class_="text-muted")
             active = pd.read_parquet(parquet_path)
-            return _regime_chart(f, reg, active)
+            return fig_to_img(_regime_chart(f, reg, active), alt=f"{f} regime")
         return _regime
 
     for _f in _FACTORS:
