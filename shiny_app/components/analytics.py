@@ -111,7 +111,8 @@ def rolling_sharpe_plot(returns_df: pd.DataFrame | None, window: int = 252) -> p
         if col not in returns_df.columns:
             continue
         r = returns_df[col]
-        rs = r.rolling(window).mean() / r.rolling(window).std() * sqrt(252)
+        roll_std = r.rolling(window).std()
+        rs = (r.rolling(window).mean() / roll_std.replace(0, pd.NA)) * sqrt(252)
         ax.plot(rs.index, rs, label=label, color=color, linestyle=ls, linewidth=lw)
     ax.axhline(0, color="black", linewidth=0.5, linestyle="--")
     ax.set_ylabel(f"Rolling Sharpe Ratio ({window}-day)")
@@ -140,6 +141,7 @@ def drawdown_plot(returns_df: pd.DataFrame | None) -> plt.Figure:
             ax.fill_between(dd.index, dd, 0, alpha=0.12, color=color)
     ax.set_ylabel("Drawdown (%)")
     ax.legend()
+    ax.axhline(0, color="black", linewidth=0.5)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     return fig
@@ -210,10 +212,13 @@ def regime_plot(
     ax.plot(idx, cum_active * 100, color="#7c3aed", linewidth=1.0)
     prev_date, prev_label = idx[0], labels.iloc[0]
     for i in range(1, len(idx)):
-        if labels.iloc[i] != prev_label or i == len(idx) - 1:
+        if labels.iloc[i] != prev_label:
             color = "green" if prev_label == 0 else "red"
             ax.axvspan(prev_date, idx[i], alpha=0.2, color=color)
             prev_date, prev_label = idx[i], labels.iloc[i]
+    # flush the last segment
+    color = "green" if prev_label == 0 else "red"
+    ax.axvspan(prev_date, idx[-1], alpha=0.2, color=color)
     ax.axhline(0, color="black", linewidth=0.5)
     ax.set_title(f"{factor.capitalize()} — Regime Detection")
     ax.set_ylabel("Cumulative Active Return (%)")
@@ -266,26 +271,30 @@ def _metrics_comparison_html(df: pd.DataFrame, selected_te: int) -> str:
             else:
                 val = row[raw_col]
                 try:
-                    color = _METRIC_COLORS[display_col](float(val))
-                    fmt   = _format_value(display_col, float(val))
-                    fw    = "700" if te == selected_te else "normal"
-                    row_html += (
-                        f"<td style='padding:5px 8px;text-align:right;"
-                        f"background:{bg};color:{color};font-weight:{fw}'>{fmt}</td>"
-                    )
+                    fval = float(val)
                 except (TypeError, ValueError):
                     row_html += f"<td style='padding:5px 8px;text-align:right;background:{bg}'>—</td>"
+                    continue
+                color = _METRIC_COLORS[display_col](fval)
+                fmt   = _format_value(display_col, fval)
+                fw    = "700" if te == selected_te else "normal"
+                row_html += (
+                    f"<td style='padding:5px 8px;text-align:right;"
+                    f"background:{bg};color:{color};font-weight:{fw}'>{fmt}</td>"
+                )
         if ew_row is not None and raw_col in ew_row.index:
             val = ew_row[raw_col]
             try:
-                color = _METRIC_COLORS[display_col](float(val))
-                fmt   = _format_value(display_col, float(val))
+                fval = float(val)
+            except (TypeError, ValueError):
+                row_html += "<td style='padding:5px 8px;text-align:right;background:#fff3cd'>—</td>"
+            else:
+                color = _METRIC_COLORS[display_col](fval)
+                fmt   = _format_value(display_col, fval)
                 row_html += (
                     f"<td style='padding:5px 8px;text-align:right;"
                     f"background:#fff3cd;color:{color}'>{fmt}</td>"
                 )
-            except (TypeError, ValueError):
-                row_html += "<td style='padding:5px 8px;text-align:right;background:#fff3cd'>—</td>"
         else:
             row_html += "<td style='padding:5px 8px;text-align:right;background:#fff3cd'>—</td>"
         row_html += "</tr>"
