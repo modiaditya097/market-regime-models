@@ -7,6 +7,13 @@ import base64
 
 @module.ui
 def model_tab_ui(cfg: dict):
+    from shiny_app.components.layout import placeholder_card
+    if not Path(cfg["output_dir"]).exists():
+        return ui.page_fluid(
+            ui.h2("Simple-HMM: 3-State Hidden Markov Model", class_="text-primary"),
+            ui.hr(),
+            placeholder_card("Outputs for this model have not been generated yet."),
+        )
     return ui.page_fluid(
         ui.div(
             ui.h2("Simple-HMM: 3-State Hidden Markov Model", class_="text-primary"),

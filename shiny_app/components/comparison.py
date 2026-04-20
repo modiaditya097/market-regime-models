@@ -11,7 +11,7 @@ from shiny import module, ui, render
 
 from shiny_app.components.charts import load_returns_df, load_metrics_row, _DISPLAY_COLS
 
-_COLORS = ["#7c3aed", "#10b981", "#f97316"]  # model1, model2, model3
+_COLORS = ["#7c3aed", "#10b981", "#f97316", "#e11d48", "#0ea5e9", "#eab308", "#8b5cf6"]
 
 
 @module.ui

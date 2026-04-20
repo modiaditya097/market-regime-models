@@ -39,9 +39,11 @@ def load_metrics_row(output_dir: Path, te_pct: int) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
     df = pd.read_csv(path)
+    df = df.rename(columns={"active_return": "active_ret_vs_market"})
     target = te_pct / 100
     mask = (df["target_te"] - target).abs() < 1e-6
-    return df[mask][list(_DISPLAY_COLS.keys())]
+    keep = [c for c in _DISPLAY_COLS if c != "strategy" and c in df.columns]
+    return df[mask][keep]
 
 
 def load_returns_df(output_dir: Path, te_pct: int) -> pd.DataFrame | None:
@@ -49,9 +51,14 @@ def load_returns_df(output_dir: Path, te_pct: int) -> pd.DataFrame | None:
 
     Returns DataFrame(index=date, columns=[portfolio, market, ew])
     or None if the file is missing.
+    Supports both returns_te{N}.csv (model1/model3) and returns.csv (hmm/hsmm/msgarch).
     """
     path = Path(output_dir) / f"returns_te{te_pct}.csv"
-    if not path.exists():
-        return None
-    df = pd.read_csv(path, parse_dates=["date"], index_col="date")
-    return df[["portfolio", "market", "ew"]]
+    if path.exists():
+        df = pd.read_csv(path, parse_dates=["date"], index_col="date")
+        return df[["portfolio", "market", "ew"]]
+    path = Path(output_dir) / "returns.csv"
+    if path.exists():
+        df = pd.read_csv(path, parse_dates=["date"], index_col="date")
+        return df.rename(columns={"strategy": "portfolio"})[["portfolio", "market"]]
+    return None
