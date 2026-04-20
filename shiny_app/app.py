@@ -33,8 +33,7 @@ def build_app() -> App:
         *nav_panels,
         title="Dynamic Factor Allocation Dashboard",
         id="main_nav",
-        bg="#1a1a2e",
-        inverse=True,
+        navbar_options=ui.navbar_options(bg="#1a1a2e", theme="dark"),
     )
 
     def server(input, output, session):

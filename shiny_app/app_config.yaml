@@ -12,31 +12,3 @@ models:
     module: "shiny_app.modules.model3"
     te_targets: [0.03]
     run_command: null
-
-  - id: simple_hmm
-    name: "Simple-HMM (S&P 500)"
-    output_dir: "outputs/simple_hmm"
-    module: "shiny_app.modules.simple_hmm"
-    te_targets: [0.03]
-    run_command: null
-
-  - id: msgarch
-    name: "MS-GARCH (S&P 500)"
-    output_dir: "outputs/msgarch"
-    module: "shiny_app.modules.msgarch"
-    te_targets: [0.03]
-    run_command: null
-
-  - id: hmm
-    name: "HMM (S&P 500)"
-    output_dir: "outputs/hmm"
-    module: "shiny_app.modules.hmm"
-    te_targets: [0.03]
-    run_command: null
-
-  - id: hsmm
-    name: "HSMM (S&P 500)"
-    output_dir: "outputs/hsmm"
-    module: "shiny_app.modules.hsmm"
-    te_targets: [0.03]
-    run_command: null
