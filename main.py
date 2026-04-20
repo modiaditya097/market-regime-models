@@ -25,10 +25,11 @@ from src.backtest import (
     compute_ew_returns,
     compute_performance_table,
     save_results,
+    save_weights_csv,
     plot_cumulative_returns,
     plot_regime,
     plot_portfolio_weights,
-    save_returns_csv,          # ← add this line
+    save_returns_csv,
 )
 
 
@@ -78,6 +79,12 @@ def main():
     for f, labels in regime_labels.items():
         bull_pct = (labels == 0).mean() * 100
         print(f"      {f:10s}: {len(labels)} test days, {bull_pct:.1f}% bull")
+
+    # Save regime labels for dashboard (TE-independent — save once)
+    _out_dir = os.path.dirname(cfg["output"]["results_path"])
+    os.makedirs(_out_dir, exist_ok=True)
+    pd.DataFrame(regime_labels).to_csv(os.path.join(_out_dir, "regimes.csv"))
+    print("      Saved regimes.csv")
 
     # Build in-sample labels proxy for view return computation.
     # Use regime_labels shifted back by 1 as training history proxy.
@@ -177,6 +184,7 @@ def main():
             te_suffix=suffix,
         )
         plot_portfolio_weights(weights_te.reindex(weights.index), plots_dir, te_suffix=suffix)
+        save_weights_csv(weights_te.reindex(weights.index), output_dir, te_suffix=suffix)
         save_returns_csv(port_ret_te, mkt_ret, ew_ret, output_dir, te_suffix=suffix)
 
     print("\nDone. Results in outputs/")

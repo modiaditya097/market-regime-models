@@ -105,6 +105,14 @@ def save_returns_csv(
     print(f"Saved {path}")
 
 
+def save_weights_csv(weights: pd.DataFrame, output_dir: str, te_suffix: str = "") -> None:
+    """Save daily portfolio weights to CSV for the Shiny dashboard."""
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, f"weights{te_suffix}.csv")
+    weights.to_csv(path)
+    print(f"Saved {path}")
+
+
 def plot_cumulative_returns(
     port_ret: pd.Series,
     mkt_ret: pd.Series,

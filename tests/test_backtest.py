@@ -8,6 +8,7 @@ from src.backtest import (
     compute_portfolio_returns,
     compute_ew_returns,
     compute_performance_table,
+    save_weights_csv,
 )
 from src.utils import N_ASSETS, ASSETS
 
@@ -69,3 +70,17 @@ def test_performance_table_keys():
                 'ir_vs_ew', 'active_ret_vs_market', 'active_ret_vs_ew', 'turnover']
     for k in required:
         assert k in metrics, f"Missing metric: {k}"
+
+
+def test_save_weights_csv(tmp_path):
+    dates = pd.bdate_range("2020-01-01", periods=10)
+    weights = pd.DataFrame(
+        {a: [1 / 6] * 10 for a in ["market", "value", "size", "quality", "growth", "momentum"]},
+        index=dates,
+    )
+    save_weights_csv(weights, str(tmp_path), te_suffix="_te3")
+    path = tmp_path / "weights_te3.csv"
+    assert path.exists()
+    loaded = pd.read_csv(path, index_col=0, parse_dates=True)
+    assert list(loaded.columns) == ["market", "value", "size", "quality", "growth", "momentum"]
+    assert len(loaded) == 10
