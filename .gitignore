@@ -13,3 +13,6 @@ docs/superpowers/
 jump-models-author/
 *.pdf
 *.pptx
+*.csv
+outputs/
+!outputs/model3/**
