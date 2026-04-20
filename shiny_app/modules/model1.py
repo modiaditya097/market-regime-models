@@ -4,6 +4,8 @@ import asyncio
 import re
 from pathlib import Path
 
+import yaml as _yaml
+
 from shiny import module, ui, render, reactive
 
 from shiny_app.components.charts import img_tag, load_metrics_row, load_returns_df, _DISPLAY_COLS
@@ -21,8 +23,23 @@ _SIDEBAR_CSS = """
 """
 
 
+def _load_param_defaults(project_root: Path) -> dict:
+    cfg_path = project_root / "config.yaml"
+    if not cfg_path.exists():
+        return {"jump_penalty": 50.0, "max_feats": 9.5, "risk_aversion": 2.5, "txn_cost": 5}
+    with open(cfg_path) as f:
+        cfg = _yaml.safe_load(f)
+    return {
+        "jump_penalty":  cfg["sjm"]["jump_penalty"],
+        "max_feats":     cfg["sjm"]["max_feats"],
+        "risk_aversion": cfg["black_litterman"]["risk_aversion"],
+        "txn_cost":      cfg["black_litterman"]["transaction_cost_bps"],
+    }
+
+
 @module.ui
 def model_tab_ui(cfg: dict):
+    defaults = _load_param_defaults(Path(__file__).parent.parent.parent)
     te_choices = {str(int(t * 100)): f"{int(t * 100)}%" for t in cfg.get("te_targets", [0.03])}
     default_te = "3" if "3" in te_choices else list(te_choices.keys())[0]
 
@@ -41,6 +58,16 @@ def model_tab_ui(cfg: dict):
         ),
         ui.hr(),
         ui.input_select("te", "TE Target", choices=te_choices, selected=default_te),
+        ui.hr(),
+        ui.div(ui.tags.b("\u2699 Parameters"), class_="mb-2"),
+        ui.input_numeric("jump_penalty", "Jump Penalty (\u03bb)",
+                         value=defaults["jump_penalty"], step=1, min=1),
+        ui.input_numeric("max_feats", "Feature Sparsity (\u03ba\u00b2)",
+                         value=defaults["max_feats"], step=0.5, min=0.5),
+        ui.input_numeric("risk_aversion", "Risk Aversion (\u03b4)",
+                         value=defaults["risk_aversion"], step=0.1, min=0.1),
+        ui.input_numeric("txn_cost", "Txn Cost (bps)",
+                         value=defaults["txn_cost"], step=1, min=0),
         ui.input_action_button(
             "rerun", "Run Model",
             class_="btn-primary btn-sm w-100 mt-2",
@@ -84,9 +111,21 @@ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
         progress_pct.set(0)
         step_msg.set("Starting...")
 
+        tmp_cfg_path = project_root / "outputs" / "tmp_config.yaml"
+        base_cfg_path = project_root / "config.yaml"
+        with open(base_cfg_path) as f:
+            cfg_data = _yaml.safe_load(f)
+        cfg_data["sjm"]["jump_penalty"]                     = float(input.jump_penalty())
+        cfg_data["sjm"]["max_feats"]                        = float(input.max_feats())
+        cfg_data["black_litterman"]["risk_aversion"]        = float(input.risk_aversion())
+        cfg_data["black_litterman"]["transaction_cost_bps"] = int(input.txn_cost())
+        with open(tmp_cfg_path, "w") as f:
+            _yaml.dump(cfg_data, f, default_flow_style=False)
+        actual_cmd = run_cmd + ["--config", str(tmp_cfg_path)]
+
         try:
             proc = await asyncio.create_subprocess_exec(
-                *run_cmd,
+                *actual_cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=str(project_root),
@@ -113,6 +152,8 @@ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
             run_log.set(str(exc))
         finally:
             running.set(False)
+            if tmp_cfg_path.exists():
+                tmp_cfg_path.unlink()
 
     @render.ui
     def run_progress():
