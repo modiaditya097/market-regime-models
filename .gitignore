@@ -16,3 +16,6 @@ jump-models-author/
 *.csv
 outputs/
 !outputs/model3/**
+!outputs/hmm/**
+!outputs/hsmm/**
+!outputs/msgarch/**
