@@ -35,7 +35,7 @@ def _format_value(col_display: str, raw: float) -> str:
     if col_display in ("Sharpe", "IR vs Mkt"):
         return f"{raw:.3f}"
     if col_display in ("Max DD", "Volatility", "Active Ret"):
-        return f"{raw:.2f}%"
+        return f"{raw * 100:.2f}%"
     if col_display == "Turnover":
         return f"{raw:.4f}"
     return str(raw)
@@ -70,8 +70,7 @@ def load_all_metrics(output_dir: Path) -> pd.DataFrame:
     path = Path(output_dir) / "results.csv"
     if not path.exists():
         return pd.DataFrame()
-    df = pd.read_csv(path)
-    return df.rename(columns={"active_return": "active_ret_vs_market"})
+    return pd.read_csv(path)
 
 
 # ── Chart functions ───────────────────────────────────────────────────────────
