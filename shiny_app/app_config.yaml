@@ -4,7 +4,7 @@ models:
     output_dir: "outputs"
     module: "shiny_app.modules.model1"
     te_targets: [0.01, 0.02, 0.03, 0.04]
-    run_command: ["python", "main.py"]
+    run_command: ["python", "-u", "main.py"]
 
   - id: model3
     name: "SC-HMM"
