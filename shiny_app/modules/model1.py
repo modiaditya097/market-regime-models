@@ -263,8 +263,12 @@ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
         @output(id=f"regime_{f}_plot")
         @render.plot(alt=f"{f} regime")
         def _regime():
-            reg    = load_regimes_df(output_dir)
-            active = pd.read_parquet(output_dir / "cache" / "active_returns.parquet")
+            reg          = load_regimes_df(output_dir)
+            parquet_path = output_dir / "cache" / "active_returns.parquet"
+            if not parquet_path.exists():
+                from shiny_app.components.analytics import _blank_fig
+                return _blank_fig("Run the model to generate regime data")
+            active = pd.read_parquet(parquet_path)
             return _regime_chart(f, reg, active)
         return _regime
 

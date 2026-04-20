@@ -46,7 +46,7 @@ def _blank_fig(msg: str = "No data available") -> plt.Figure:
     ax.text(0.5, 0.5, msg, ha="center", va="center",
             color="grey", fontsize=12, transform=ax.transAxes)
     ax.set_axis_off()
-    plt.tight_layout()
+    fig.tight_layout()
     return fig
 
 
@@ -94,7 +94,7 @@ def cumulative_returns_plot(returns_df: pd.DataFrame | None) -> plt.Figure:
     ax.set_ylabel("Cumulative Return (%)")
     ax.legend()
     ax.grid(True, alpha=0.3)
-    plt.tight_layout()
+    fig.tight_layout()
     return fig
 
 
@@ -118,7 +118,7 @@ def rolling_sharpe_plot(returns_df: pd.DataFrame | None, window: int = 252) -> p
     ax.set_ylabel(f"Rolling Sharpe Ratio ({window}-day)")
     ax.legend()
     ax.grid(True, alpha=0.3)
-    plt.tight_layout()
+    fig.tight_layout()
     return fig
 
 
@@ -143,7 +143,7 @@ def drawdown_plot(returns_df: pd.DataFrame | None) -> plt.Figure:
     ax.legend()
     ax.axhline(0, color="black", linewidth=0.5)
     ax.grid(True, alpha=0.3)
-    plt.tight_layout()
+    fig.tight_layout()
     return fig
 
 
@@ -171,7 +171,7 @@ def realized_te_plot(
     ax.set_ylabel("Annualized Tracking Error (%)")
     ax.legend()
     ax.grid(True, alpha=0.3)
-    plt.tight_layout()
+    fig.tight_layout()
     return fig
 
 
@@ -191,7 +191,7 @@ def portfolio_weights_plot(weights_df: pd.DataFrame | None) -> plt.Figure:
     ax.set_ylabel("Weight (%)")
     ax.legend(loc="upper left", fontsize=8)
     ax.grid(True, alpha=0.3)
-    plt.tight_layout()
+    fig.tight_layout()
     return fig
 
 
@@ -223,7 +223,7 @@ def regime_plot(
     ax.set_title(f"{factor.capitalize()} — Regime Detection")
     ax.set_ylabel("Cumulative Active Return (%)")
     ax.grid(True, alpha=0.3)
-    plt.tight_layout()
+    fig.tight_layout()
     return fig
 
 
