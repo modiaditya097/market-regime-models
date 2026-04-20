@@ -1,0 +1,667 @@
+From fb084b38711bec48d1f682f69e9c1f1ed9f52275 Mon Sep 17 00:00:00 2001
+From: SC-HMM Dashboard <sc-hmm@project.local>
+Date: Mon, 20 Apr 2026 03:30:15 +0000
+Subject: [PATCH] feat(sc-hmm): implement SC-HMM dashboard tab and output
+ exporter
+
+- shiny_app/modules/model3.py: full SC-HMM tab with sticky sidebar,
+  9 sections (perf tables, cumulative returns, drawdown, rolling Sharpe,
+  portfolio weights, regime timeline, transition matrix, stress/bull tables,
+  macro signal panel), colour-coded metrics, placeholder cards
+
+- export_sc_hmm_outputs.py: run after notebook to produce all dashboard
+  outputs (returns_te3.csv, 6 PNGs, 3 metrics CSVs, stress/bull tables,
+  macro_latest.csv) in outputs/model3/
+
+- shiny_app/app_config.yaml: rename Model 3 -> SC-HMM
+---
+ export_sc_hmm_outputs.py    | 251 ++++++++++++++++++++++++++
+ shiny_app/app_config.yaml   |   2 +-
+ shiny_app/modules/model3.py | 351 ++++++++++++++++++++++++++++++++++--
+ 3 files changed, 588 insertions(+), 16 deletions(-)
+ create mode 100644 export_sc_hmm_outputs.py
+
+diff --git a/export_sc_hmm_outputs.py b/export_sc_hmm_outputs.py
+new file mode 100644
+index 0000000..6c26852
+--- /dev/null
++++ b/export_sc_hmm_outputs.py
+@@ -0,0 +1,251 @@
++"""
++SC-HMM Dashboard Output Exporter
++=================================
++Run this script AFTER executing your SC-HMM notebook (all cells).
++It saves all plots, CSVs, and tables that the Shiny dashboard (model3) needs.
++
++Usage (from your project directory):
++    python export_sc_hmm_outputs.py
++
++The script expects these variables to already exist in the Python session
++(i.e. the notebook must have been run first):
++    dates_bt, ret_sm_hard, ret_sm_soft, ret_sm_macro,
++    bh_spy, bh_shy, bh_gld, ew_4, rp_ret, static,
++    reg_smooth, mac_sig_r, P_final, macro,
++    bt_ret, w_sm_hard, store,
++    STRESS_PERIODS, BULL_PERIODS, REGIME_COLORS, REGIME_ORDER,
++    ANNUALISE, TEST_START, TRAIN_END, assets,
++    compute_metrics, cum_ret, drawdown_series, rolling_sharpe
++
++HOW TO ADD THIS TO YOUR NOTEBOOK:
++  1. Open SC_HMM_Phase2_Final.ipynb
++  2. Add a new cell at the very end (after Cell 16)
++  3. Paste the code below (or use: exec(open('export_sc_hmm_outputs.py').read()))
++"""
++
++import os
++import numpy as np
++import pandas as pd
++import matplotlib
++matplotlib.use("Agg")
++import matplotlib.pyplot as plt
++import matplotlib.ticker as mticker
++from pathlib import Path
++
++# ── Output directories ─────────────────────────────────────────────────────────
++OUTPUT_DIR = Path("outputs/model3")
++PLOTS_DIR  = OUTPUT_DIR / "plots"
++OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
++PLOTS_DIR.mkdir(parents=True, exist_ok=True)
++print(f"Output directory: {OUTPUT_DIR.resolve()}")
++
++
++# ── 1. returns_te3.csv  (for the Comparison tab) ──────────────────────────────
++returns_df = pd.DataFrame({
++    "date":      dates_bt,
++    "portfolio": ret_sm_hard,   # SC-HMM Hard is the representative strategy
++    "market":    bh_spy,
++    "ew":        ew_4,
++})
++returns_df.to_csv(OUTPUT_DIR / "returns_te3.csv", index=False)
++print("✓ returns_te3.csv")
++
++
++# ── 2. Performance tables ──────────────────────────────────────────────────────
++STRATEGIES = [
++    ("SC-HMM Hard (net)",    ret_sm_hard),
++    ("SC-HMM Soft (net)",    ret_sm_soft),
++    ("SC-HMM Macro (net)",   ret_sm_macro),
++    ("Buy-Hold SPY",         bh_spy),
++    ("Buy-Hold SHY",         bh_shy),
++    ("Buy-Hold GLD",         bh_gld),
++    ("Equal-Weight 4A",      ew_4),
++    ("Risk Parity",          rp_ret),
++    ("Static 30/10/30/30",   static),
++]
++
++def make_metrics_df(mask):
++    rows = []
++    for name, series in STRATEGIES:
++        row = {"Strategy": name}
++        row.update(compute_metrics(series[mask]))
++        rows.append(row)
++    return pd.DataFrame(rows)
++
++full_m  = np.ones(len(dates_bt), dtype=bool)
++train_m = dates_bt <= pd.Timestamp(TRAIN_END)
++test_m  = dates_bt >= pd.Timestamp(TEST_START)
++
++make_metrics_df(full_m).to_csv(OUTPUT_DIR / "metrics_full.csv",  index=False)
++make_metrics_df(train_m).to_csv(OUTPUT_DIR / "metrics_train.csv", index=False)
++make_metrics_df(test_m).to_csv(OUTPUT_DIR / "metrics_test.csv",  index=False)
++print("✓ metrics_full/train/test.csv")
++
++
++# ── 3. Stress & Bull period tables ─────────────────────────────────────────────
++STRAT_SUBSET = {
++    "SC-HMM Hard": ret_sm_hard,
++    "SC-HMM Soft": ret_sm_soft,
++    "Macro-Filt":  ret_sm_macro,
++    "SPY B&H":     bh_spy,
++    "Risk Parity": rp_ret,
++}
++
++def make_period_df(periods):
++    rows = []
++    for pname, (s, e) in periods.items():
++        mask = (dates_bt >= s) & (dates_bt <= e)
++        if mask.sum() < 3:
++            continue
++        row = {"Period": pname}
++        for sname, series in STRAT_SUBSET.items():
++            tot = float((np.cumprod(1 + series[mask]) - 1)[-1])
++            row[sname] = f"{tot:.1%}"
++        rows.append(row)
++    return pd.DataFrame(rows)
++
++make_period_df(STRESS_PERIODS).to_csv(OUTPUT_DIR / "stress_table.csv", index=False)
++make_period_df(BULL_PERIODS).to_csv(OUTPUT_DIR / "bull_table.csv",   index=False)
++print("✓ stress_table.csv, bull_table.csv")
++
++
++# ── 4. Macro latest snapshot ───────────────────────────────────────────────────
++latest_macro = macro.iloc[-1]
++vix   = float(latest_macro["VIX"])
++curve = float(latest_macro["T10Y2Y"])
++hy    = float(latest_macro["HY_SPREAD"])
++
++def _sig(val, bear, bull, higher_is_bad=True):
++    if higher_is_bad:
++        if val > bear: return "bear"
++        if val < bull: return "bull"
++    else:
++        if val < bear: return "bear"
++        if val > bull: return "bull"
++    return "neutral"
++
++macro_df = pd.DataFrame([
++    {"indicator": "VIX",             "value": f"{vix:.1f}",   "signal": _sig(vix,  25.0, 16.0, True)},
++    {"indicator": "Yield Curve 10Y-2Y","value": f"{curve:+.2f}", "signal": _sig(curve, 0.0, 1.5,  False)},
++    {"indicator": "HY Spread",        "value": f"{hy:.2f}%",  "signal": _sig(hy,   4.5, 3.0,  True)},
++])
++macro_df.to_csv(OUTPUT_DIR / "macro_latest.csv", index=False)
++print("✓ macro_latest.csv")
++
++
++# ── 5. Plots ───────────────────────────────────────────────────────────────────
++
++# 5a. Cumulative Returns
++fig, ax = plt.subplots(figsize=(14, 5))
++ax.plot(dates_bt, cum_ret(ret_sm_hard),  color="#2c3e50", lw=2.2, label="SC-HMM Hard (net)")
++ax.plot(dates_bt, cum_ret(ret_sm_soft),  color="#8e44ad", lw=1.8, ls="-.", label="SC-HMM Soft (net)")
++ax.plot(dates_bt, cum_ret(ret_sm_macro), color="#16a085", lw=2.0, ls="--", label="SC-HMM Macro (net)")
++ax.plot(dates_bt, cum_ret(bh_spy),       color="#2980b9", lw=1.8, alpha=0.8, label="Buy-Hold SPY")
++ax.plot(dates_bt, cum_ret(rp_ret),       color="#e67e22", lw=1.5, label="Risk Parity")
++ax.plot(dates_bt, cum_ret(ew_4),         color="#27ae60", lw=1.2, alpha=0.7, label="Equal-Weight 4A")
++ax.axvline(pd.Timestamp(TEST_START), color="black", ls=":", lw=1.5, label=f"OOS start ({TEST_START})")
++for _, (s, e) in STRESS_PERIODS.items():
++    ax.axvspan(pd.Timestamp(s), pd.Timestamp(e), alpha=0.07, color="red")
++ax.set_title("SC-HMM: Cumulative Return (red = stress periods)", fontsize=12, fontweight="bold")
++ax.set_ylabel("Cumulative Return")
++ax.yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
++ax.legend(fontsize=9, ncol=3); ax.grid(alpha=0.3)
++plt.tight_layout()
++fig.savefig(PLOTS_DIR / "cumulative_returns.png", dpi=150, bbox_inches="tight")
++plt.close(fig)
++print("✓ plots/cumulative_returns.png")
++
++# 5b. Drawdown
++fig, ax = plt.subplots(figsize=(14, 4))
++ax.fill_between(dates_bt, drawdown_series(ret_sm_hard), 0, alpha=0.55, color="#2c3e50", label="SC-HMM Hard")
++ax.fill_between(dates_bt, drawdown_series(ret_sm_soft), 0, alpha=0.25, color="#8e44ad", label="SC-HMM Soft")
++ax.plot(dates_bt, drawdown_series(bh_spy), color="#2980b9", lw=1.2, label="SPY")
++ax.plot(dates_bt, drawdown_series(rp_ret), color="#e67e22", lw=1.2, label="Risk Parity")
++ax.axvline(pd.Timestamp(TEST_START), color="black", ls=":", lw=1.5)
++ax.set_title("SC-HMM: Drawdown", fontsize=12, fontweight="bold")
++ax.set_ylabel("Drawdown")
++ax.yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
++ax.legend(fontsize=9); ax.grid(alpha=0.3)
++plt.tight_layout()
++fig.savefig(PLOTS_DIR / "drawdown.png", dpi=150, bbox_inches="tight")
++plt.close(fig)
++print("✓ plots/drawdown.png")
++
++# 5c. Rolling Sharpe
++fig, ax = plt.subplots(figsize=(14, 4))
++ax.plot(dates_bt, rolling_sharpe(ret_sm_hard),  color="#2c3e50", lw=1.5, label="SC-HMM Hard")
++ax.plot(dates_bt, rolling_sharpe(ret_sm_soft),  color="#8e44ad", lw=1.5, ls="-.", label="SC-HMM Soft")
++ax.plot(dates_bt, rolling_sharpe(ret_sm_macro), color="#16a085", lw=1.5, ls="--", label="SC-HMM Macro")
++ax.plot(dates_bt, rolling_sharpe(bh_spy),       color="#2980b9", lw=1.5, alpha=0.8, label="SPY")
++ax.plot(dates_bt, rolling_sharpe(rp_ret),       color="#e67e22", lw=1.2, alpha=0.8, label="Risk Parity")
++ax.axhline(0, color="black", lw=0.8, ls="--")
++ax.axhline(1, color="green", lw=0.8, ls=":", alpha=0.6)
++ax.axvline(pd.Timestamp(TEST_START), color="black", ls=":", lw=1.5)
++ax.set_title("SC-HMM: Rolling 52-Week Sharpe Ratio", fontsize=12, fontweight="bold")
++ax.set_ylabel("Sharpe"); ax.legend(fontsize=9, ncol=3); ax.grid(alpha=0.3)
++plt.tight_layout()
++fig.savefig(PLOTS_DIR / "rolling_sharpe.png", dpi=150, bbox_inches="tight")
++plt.close(fig)
++print("✓ plots/rolling_sharpe.png")
++
++# 5d. Portfolio Weights (Hard)
++w_hard_arr = np.array(store["w_hard"])
++fig, ax = plt.subplots(figsize=(14, 4))
++ax.stackplot(dates_bt,
++             w_hard_arr[:,0], w_hard_arr[:,1], w_hard_arr[:,2], w_hard_arr[:,3],
++             labels=["SPY", "IWM", "SHY", "GLD"],
++             colors=["#2980b9", "#27ae60", "#e74c3c", "#f1c40f"], alpha=0.85)
++ax.axvline(pd.Timestamp(TEST_START), color="black", ls=":", lw=1.5, label="OOS")
++ax.set_title("SC-HMM: Portfolio Weights — Hard Strategy", fontsize=12, fontweight="bold")
++ax.set_ylabel("Weight"); ax.set_ylim(0, 1)
++ax.legend(ncol=5, fontsize=9); ax.grid(alpha=0.3)
++plt.tight_layout()
++fig.savefig(PLOTS_DIR / "portfolio_weights.png", dpi=150, bbox_inches="tight")
++plt.close(fig)
++print("✓ plots/portfolio_weights.png")
++
++# 5e. Regime Timeline
++fig, ax = plt.subplots(figsize=(14, 3))
++spy_cs = cum_ret(bh_spy)
++spy_sc = (spy_cs - spy_cs.min()) / (spy_cs.max() - spy_cs.min() + 1e-10)
++for reg, col in REGIME_COLORS.items():
++    ax.fill_between(dates_bt, 0, 1,
++                    where=(reg_smooth == reg),
++                    color=col, alpha=0.65,
++                    transform=ax.get_xaxis_transform(),
++                    label=f"{reg}")
++ax.plot(dates_bt, spy_sc, "k-", lw=0.8, alpha=0.6, label="SPY (scaled)")
++ax.axvline(pd.Timestamp(TEST_START), color="black", ls=":", lw=1.5, label="OOS start")
++ax.set_title("SC-HMM: Regime Timeline (smoothed)", fontsize=12, fontweight="bold")
++ax.set_yticks([])
++ax.legend(loc="upper left", ncol=5, fontsize=9)
++plt.tight_layout()
++fig.savefig(PLOTS_DIR / "regime_timeline.png", dpi=150, bbox_inches="tight")
++plt.close(fig)
++print("✓ plots/regime_timeline.png")
++
++# 5f. Transition Matrix
++fig, ax = plt.subplots(figsize=(5.5, 4.5))
++im = ax.imshow(P_final, cmap="Blues", vmin=0, vmax=1)
++regime_labels = ["Bull", "Neutral", "Bear"]
++for i in range(3):
++    for j in range(3):
++        v = P_final[i, j]
++        ax.text(j, i, f"{v:.1%}", ha="center", va="center", fontsize=13,
++                color="white" if v > 0.55 else "#1a1a2e",
++                fontweight="bold" if i == j else "normal")
++ax.set_xticks(range(3)); ax.set_yticks(range(3))
++ax.set_xticklabels(["→ Bull", "→ Neutral", "→ Bear"], fontsize=10)
++ax.set_yticklabels(["Bull", "Neutral", "Bear"], fontsize=10)
++ax.set_title("Transition Matrix P[i→j]", fontsize=11, fontweight="bold")
++for i in range(3):
++    ax.add_patch(plt.Rectangle((i-.5, i-.5), 1, 1, fill=False, edgecolor="#e74c3c", lw=2))
++plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
++plt.tight_layout()
++fig.savefig(PLOTS_DIR / "transition_matrix.png", dpi=150, bbox_inches="tight")
++plt.close(fig)
++print("✓ plots/transition_matrix.png")
++
++print("\n✅ All dashboard outputs saved to:", OUTPUT_DIR.resolve())
++print("   You can now run the Shiny dashboard:")
++print("   shiny run shiny_app/app.py --reload")
+diff --git a/shiny_app/app_config.yaml b/shiny_app/app_config.yaml
+index 38499b6..8e5b56c 100644
+--- a/shiny_app/app_config.yaml
++++ b/shiny_app/app_config.yaml
+@@ -14,7 +14,7 @@ models:
+     run_command: null
+ 
+   - id: model3
+-    name: "Model 3"
++    name: "SC-HMM"
+     output_dir: "outputs/model3"
+     module: "shiny_app.modules.model3"
+     te_targets: [0.03]
+diff --git a/shiny_app/modules/model3.py b/shiny_app/modules/model3.py
+index 3bc34a7..fa58a86 100644
+--- a/shiny_app/modules/model3.py
++++ b/shiny_app/modules/model3.py
+@@ -1,30 +1,351 @@
+-"""Model 3 tab — placeholder until teammate provides outputs."""
++"""SC-HMM (Spectral Clustering + HMM) model tab.
++
++Layout: sticky sidebar with section anchors + scrollable main area.
++Displays regime timeline, cumulative returns, drawdown, rolling Sharpe,
++portfolio weights, transition matrix heatmap, stress/bull period tables,
++and macro signal panel — all driven by pre-computed CSVs and PNGs.
++
++Output contract (files expected in cfg['output_dir'] = outputs/model3/):
++    returns_te3.csv          — date, portfolio, market, ew
++    plots/
++        cumulative_returns.png
++        drawdown.png
++        rolling_sharpe.png
++        portfolio_weights.png
++        regime_timeline.png
++        transition_matrix.png
++    metrics_full.csv         — full-period performance table
++    metrics_train.csv        — in-sample performance table
++    metrics_test.csv         — out-of-sample performance table
++    stress_table.csv         — stress period returns
++    bull_table.csv           — bull period returns
++    macro_latest.csv         — latest macro snapshot (indicator, value, signal)
++"""
+ 
+ from pathlib import Path
+-from shiny import module, ui, reactive
+ 
+-from shiny_app.components.layout import placeholder_card
++import matplotlib
++matplotlib.use("Agg")
++
++from shiny import module, ui, render, reactive
++from shiny_app.components.charts import img_tag
++from shiny_app.components.layout import placeholder_card, section
+ from shiny_app.utils.runner import run_pipeline
+ 
+ 
++# ── colour palette ─────────────────────────────────────────────────────────────
++_C = {
++    "hard":    "#2c3e50",
++    "soft":    "#8e44ad",
++    "macro":   "#16a085",
++    "spy":     "#2980b9",
++    "rp":      "#e67e22",
++    "ew":      "#27ae60",
++    "bull":    "#2ecc71",
++    "neutral": "#f39c12",
++    "bear":    "#e74c3c",
++}
++
++_SIDEBAR_CSS = """
++<style>
++  .sc-hmm-sidebar .anchor-links a {
++    display:block; padding:4px 0;
++    font-size:.82rem; color:#6c757d; text-decoration:none;
++  }
++  .sc-hmm-sidebar .anchor-links a:hover { color:#0d6efd; }
++</style>
++"""
++
++
++# ── internal helpers ───────────────────────────────────────────────────────────
++
++def _load_csv(output_dir: Path, name: str):
++    """Load CSV → DataFrame, return empty DataFrame if file missing."""
++    import pandas as pd
++    p = output_dir / name
++    if not p.exists():
++        return pd.DataFrame()
++    return pd.read_csv(p)
++
++
++def _fmt_val(val: str, col: str) -> str:
++    """Return colour-coded HTML for a metric cell value."""
++    try:
++        fv = float(str(val).replace("%", "").replace(",", ""))
++        if col in ("Sharpe", "Sortino", "Calmar", "CAGR", "Cumul.Ret", "Hit Rate"):
++            colour = "#198754" if fv > 0 else "#dc3545"
++        elif col == "Max DD":
++            colour = "#dc3545" if fv < -15 else "#fd7e14" if fv < -5 else "#198754"
++        else:
++            colour = "#212529"
++        return f'<span style="color:{colour};font-weight:600">{val}</span>'
++    except Exception:
++        return str(val)
++
++
++def _metrics_html(df) -> "ui.Tag":
++    """Render a performance DataFrame as a Bootstrap HTML table."""
++    import pandas as pd
++    if df.empty:
++        return ui.p("No data — run the model first.", class_="text-muted")
++    strat_col = df.columns[0]
++    metric_cols = [c for c in df.columns if c != strat_col]
++    header = [ui.tags.th(strat_col, style="min-width:200px;font-size:.78rem")] + \
++             [ui.tags.th(c, style="text-align:right;font-size:.78rem") for c in metric_cols]
++    rows = []
++    for _, row in df.iterrows():
++        cells = [ui.tags.td(str(row[strat_col]),
++                            style="font-size:.79rem;white-space:nowrap;font-weight:500")]
++        for col in metric_cols:
++            cells.append(ui.tags.td(
++                ui.HTML(_fmt_val(str(row[col]), col)),
++                style="text-align:right;font-size:.79rem"))
++        rows.append(ui.tags.tr(*cells))
++    return ui.div(
++        ui.tags.table(
++            ui.tags.thead(ui.tags.tr(*header, style="background:#f8f9fa")),
++            ui.tags.tbody(*rows),
++            class_="table table-sm table-hover",
++            style="width:100%;border-collapse:collapse",
++        ),
++        style="overflow-x:auto",
++    )
++
++
++def _period_html(df) -> "ui.Tag":
++    """Render a stress/bull period DataFrame as colour-coded HTML table."""
++    if df.empty:
++        return ui.p("No data — run the model first.", class_="text-muted")
++    period_col  = df.columns[0]
++    strat_cols  = [c for c in df.columns if c != period_col]
++    header = [ui.tags.th(period_col, style="min-width:200px;font-size:.78rem")] + \
++             [ui.tags.th(c, style="text-align:right;font-size:.78rem") for c in strat_cols]
++    rows = []
++    for _, row in df.iterrows():
++        cells = [ui.tags.td(str(row[period_col]),
++                            style="font-size:.79rem;white-space:nowrap;font-weight:500")]
++        for c in strat_cols:
++            val = str(row[c])
++            try:
++                fv  = float(val.replace("%","").replace(",",""))
++                col = "#198754" if fv >= 0 else "#dc3545"
++                html = f'<span style="color:{col};font-weight:600">{val}</span>'
++            except Exception:
++                html = val
++            cells.append(ui.tags.td(ui.HTML(html), style="text-align:right;font-size:.79rem"))
++        rows.append(ui.tags.tr(*cells))
++    return ui.div(
++        ui.tags.table(
++            ui.tags.thead(ui.tags.tr(*header, style="background:#f8f9fa")),
++            ui.tags.tbody(*rows),
++            class_="table table-sm table-hover",
++            style="width:100%;border-collapse:collapse",
++        ),
++        style="overflow-x:auto",
++    )
++
++
++# ── UI definition ──────────────────────────────────────────────────────────────
++
+ @module.ui
+ def model_tab_ui(cfg: dict):
+-    run_btn_id = "rerun" if cfg.get("run_command") else None
+-    return ui.div(
+-        placeholder_card(
+-            "This model's outputs have not been generated yet.",
+-            run_btn_id=run_btn_id,
++    has_run = bool(cfg.get("run_command"))
++
++    sidebar = ui.sidebar(
++        ui.HTML(_SIDEBAR_CSS),
++        ui.div(
++            ui.tags.b("Sections", style="font-size:.85rem"),
++            ui.div(
++                ui.tags.a("📊 Performance",          href="#perf"),
++                ui.tags.a("📈 Cumulative Returns",   href="#cumret"),
++                ui.tags.a("📉 Drawdown",             href="#dd"),
++                ui.tags.a("⚡ Rolling Sharpe",        href="#sharpe"),
++                ui.tags.a("⚖️ Portfolio Weights",    href="#weights"),
++                ui.tags.a("🔴 Regime Timeline",      href="#timeline"),
++                ui.tags.a("🔁 Transition Matrix",    href="#trans"),
++                ui.tags.a("📋 Stress / Bull Tables", href="#tables"),
++                ui.tags.a("🌡️ Macro Signals",        href="#macro"),
++                class_="anchor-links",
++            ),
++            class_="mb-3",
+         ),
+-        style="padding:2rem",
++        ui.hr(),
++        ui.input_action_button(
++            "rerun", "▶ Re-run Model",
++            class_="btn-primary btn-sm w-100",
++            disabled=not has_run,
++        ),
++        *([] if has_run else [
++            ui.p("No run command configured.",
++                 class_="text-muted mt-1", style="font-size:.75rem")
++        ]),
++        ui.output_ui("run_status"),
++        width=190,
++        class_="sc-hmm-sidebar",
++    )
++
++    main = ui.div(
++        section("📊 Performance Summary", "perf",
++            ui.navset_tab(
++                ui.nav_panel("Full Period",       ui.output_ui("tbl_full")),
++                ui.nav_panel("In-Sample",         ui.output_ui("tbl_train")),
++                ui.nav_panel("Out-of-Sample",     ui.output_ui("tbl_test")),
++            ),
++        ),
++        section("📈 Cumulative Returns",   "cumret",   ui.output_ui("img_cumret")),
++        section("📉 Drawdown",             "dd",       ui.output_ui("img_dd")),
++        section("⚡ Rolling 52-Week Sharpe","sharpe",  ui.output_ui("img_sharpe")),
++        section("⚖️ Portfolio Weights (Hard)", "weights", ui.output_ui("img_weights")),
++        section("🔴 Regime Timeline",      "timeline", ui.output_ui("img_timeline")),
++        section("🔁 Transition Matrix",    "trans",    ui.output_ui("img_trans")),
++        section("📋 Stress & Bull Periods","tables",
++            ui.navset_tab(
++                ui.nav_panel("Stress Periods", ui.output_ui("tbl_stress")),
++                ui.nav_panel("Bull Periods",   ui.output_ui("tbl_bull")),
++            ),
++        ),
++        section("🌡️ Macro Signal Overview","macro",   ui.output_ui("macro_panel")),
++        style="padding:1rem 1.5rem",
+     )
+ 
++    return ui.layout_sidebar(sidebar, main)
++
++
++# ── Server definition ──────────────────────────────────────────────────────────
+ 
+ @module.server
+ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
+-    run_cmd = cfg.get("run_command")
++    output_dir = Path(cfg["output_dir"])
++    plots_dir  = output_dir / "plots"
++    run_cmd    = cfg.get("run_command")
++
++    running = reactive.value(False)
++    run_log = reactive.value("")
++
++    # ── Re-run ───────────────────────────────────────────────────────────────
++    @reactive.effect
++    @reactive.event(input.rerun)
++    def _launch():
++        if run_cmd is None or running():
++            return
++        running.set(True)
++        run_log.set("⏳ Pipeline running…")
++        proc = run_pipeline(run_cmd, project_root)
++        out, _ = proc.communicate()
++        if proc.returncode == 0:
++            run_log.set("✅ Done.\n" + (out or "")[-1500:])
++        else:
++            run_log.set(f"❌ Error (exit {proc.returncode})\n" + (out or "")[-2000:])
++        running.set(False)
++
++    @render.ui
++    def run_status():
++        log = run_log()
++        if not log:
++            return ui.div()
++        c = "#198754" if log.startswith("✅") else "#dc3545" if log.startswith("❌") else "#6c757d"
++        return ui.div(
++            ui.tags.pre(log, style=f"font-size:.68rem;max-height:130px;overflow-y:auto;color:{c}"),
++            class_="mt-2",
++        )
++
++    # ── Performance tables ────────────────────────────────────────────────────
++    @render.ui
++    def tbl_full():
++        return _metrics_html(_load_csv(output_dir, "metrics_full.csv"))
++
++    @render.ui
++    def tbl_train():
++        return _metrics_html(_load_csv(output_dir, "metrics_train.csv"))
++
++    @render.ui
++    def tbl_test():
++        return _metrics_html(_load_csv(output_dir, "metrics_test.csv"))
++
++    # ── Plot images ───────────────────────────────────────────────────────────
++    def _img_or_placeholder(fname: str, alt: str, msg: str):
++        p = plots_dir / fname
++        return img_tag(p, alt) if p.exists() else placeholder_card(msg)
++
++    @render.ui
++    def img_cumret():
++        return _img_or_placeholder(
++            "cumulative_returns.png", "Cumulative Returns",
++            "Cumulative returns plot not found. Run the model to generate outputs.")
++
++    @render.ui
++    def img_dd():
++        return _img_or_placeholder(
++            "drawdown.png", "Drawdown",
++            "Drawdown plot not found. Run the model to generate outputs.")
++
++    @render.ui
++    def img_sharpe():
++        return _img_or_placeholder(
++            "rolling_sharpe.png", "Rolling Sharpe",
++            "Rolling Sharpe plot not found. Run the model to generate outputs.")
++
++    @render.ui
++    def img_weights():
++        return _img_or_placeholder(
++            "portfolio_weights.png", "Portfolio Weights",
++            "Portfolio weights plot not found. Run the model to generate outputs.")
++
++    @render.ui
++    def img_timeline():
++        return _img_or_placeholder(
++            "regime_timeline.png", "Regime Timeline",
++            "Regime timeline plot not found. Run the model to generate outputs.")
++
++    @render.ui
++    def img_trans():
++        return _img_or_placeholder(
++            "transition_matrix.png", "Transition Matrix",
++            "Transition matrix not found. Run the model to generate outputs.")
++
++    # ── Stress / bull tables ──────────────────────────────────────────────────
++    @render.ui
++    def tbl_stress():
++        return _period_html(_load_csv(output_dir, "stress_table.csv"))
++
++    @render.ui
++    def tbl_bull():
++        return _period_html(_load_csv(output_dir, "bull_table.csv"))
++
++    # ── Macro panel ───────────────────────────────────────────────────────────
++    @render.ui
++    def macro_panel():
++        df = _load_csv(output_dir, "macro_latest.csv")
++        if df.empty:
++            return ui.p("Macro snapshot not available — run the model first.",
++                        class_="text-muted")
++
++        colour_map = {"bull": "#198754", "neutral": "#fd7e14", "bear": "#dc3545"}
++        cards = []
++        for _, row in df.iterrows():
++            label  = str(row.get("indicator", ""))
++            value  = str(row.get("value", ""))
++            signal = str(row.get("signal", "neutral")).lower()
++            colour = colour_map.get(signal, "#6c757d")
++            cards.append(ui.div(
++                ui.div(
++                    ui.p(label, style="font-size:.74rem;color:#6c757d;margin:0"),
++                    ui.p(value, style="font-size:1.25rem;font-weight:700;margin:0"),
++                    ui.tags.span(signal.upper(),
++                                 style=f"font-size:.7rem;font-weight:700;color:{colour}"),
++                    class_="card-body py-2 px-3",
++                ),
++                class_="card",
++                style=f"border-top:3px solid {colour};flex:1;min-width:140px",
++            ))
+ 
+-    if run_cmd:
+-        @reactive.effect
+-        @reactive.event(input.rerun)
+-        def _launch():
+-            run_pipeline(run_cmd, project_root)
++        return ui.div(
++            ui.div(*cards, style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem"),
++            ui.p(
++                "Thresholds — VIX: Bull < 16, Bear > 25. "
++                "Yield Curve (10Y-2Y): Inverted < 0, Bull > 1.5. "
++                "HY Spread: Bull < 3.0, Bear > 4.5. "
++                "Signal = weighted majority vote (VIX ×2, Curve ×1, HY ×1).",
++                style="font-size:.74rem;color:#6c757d",
++            ),
++        )
+-- 
+2.43.0
+

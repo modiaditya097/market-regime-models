@@ -14,7 +14,7 @@ models:
     run_command: null
 
   - id: model3
-    name: "Model 3"
+    name: "SC-HMM"
     output_dir: "outputs/model3"
     module: "shiny_app.modules.model3"
     te_targets: [0.03]
