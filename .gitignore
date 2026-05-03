@@ -19,3 +19,4 @@ outputs/
 !outputs/hmm/**
 !outputs/hsmm/**
 !outputs/msgarch/**
+!macro_data.csv
