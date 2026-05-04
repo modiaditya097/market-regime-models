@@ -11,7 +11,7 @@ models:
     output_dir: "outputs/model3"
     module: "shiny_app.modules.model3"
     te_targets: [0.03]
-    run_command: null
+    run_command: ["python","run_sc_hmm.py']
 
   - id: hmm
     name: "HMM (S&P 500)"
