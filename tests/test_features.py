@@ -88,3 +88,40 @@ def test_all_features_column_names():
         'mkt_ret_21', 'vix_21', 'y2_diff_21', 'slope_diff_21',
     ]
     assert list(X.columns) == expected_cols
+
+
+def test_compute_market_features_base_shape():
+    """Without extras, returns 4 columns."""
+    from src.features import compute_market_features
+    result = compute_market_features(mkt_ret, vix, y2, y10)
+    assert result.shape[1] == 4
+    assert "mkt_ret_21" in result.columns
+
+
+def test_compute_market_features_with_extras():
+    """With one extra enabled series, returns 5 columns."""
+    from src.features import compute_market_features
+    extras = {"dxy": pd.Series(np.random.randn(N) * 0.01, index=dates)}
+    result = compute_market_features(mkt_ret, vix, y2, y10,
+                                     macro_extras=extras, enabled=["dxy"])
+    assert result.shape[1] == 5
+    assert "dxy_21" in result.columns
+
+
+def test_compute_market_features_unknown_key_skipped():
+    """Keys not in macro_extras are silently skipped."""
+    from src.features import compute_market_features
+    result = compute_market_features(mkt_ret, vix, y2, y10,
+                                     macro_extras={}, enabled=["nonexistent"])
+    assert result.shape[1] == 4
+
+
+def test_compute_all_features_with_extras():
+    """compute_all_features forwards extras to compute_market_features."""
+    from src.features import compute_all_features
+    extras = {"vix_level": pd.Series(np.log(vix), index=dates)}
+    active_rets = {"value": rand_ret, "size": rand_ret}
+    result = compute_all_features(active_rets, mkt_ret, vix, y2, y10,
+                                  macro_extras=extras, enabled=["vix_level"])
+    for factor in ["value", "size"]:
+        assert "vix_level" in result[factor].columns
