@@ -161,3 +161,64 @@ def test_metrics_comparison_html_contains_sharpe_row():
 def test_metrics_comparison_html_empty_df():
     html = _metrics_comparison_html(pd.DataFrame(), selected_te=3)
     assert isinstance(html, str)
+
+
+# ── Walk-Forward Evaluation tests ────────────────────────────────────────────
+
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from shiny_app.components.analytics import (
+    load_wfe_results,
+    wfe_metrics_html,
+    wfe_folds_plot,
+)
+from pathlib import Path
+import tempfile
+
+_WFE_DATA = pd.DataFrame([
+    {"fold": 1, "period_start": "2008-01-01", "period_end": "2011-01-01",
+     "sharpe": 0.21, "ir_vs_market": -0.05, "max_drawdown": -0.58,
+     "active_ret_vs_market": -0.012, "volatility": 0.18, "turnover": 0.4},
+    {"fold": 2, "period_start": "2011-01-01", "period_end": "2014-01-01",
+     "sharpe": 0.74, "ir_vs_market": 0.18, "max_drawdown": -0.22,
+     "active_ret_vs_market": 0.021, "volatility": 0.14, "turnover": 0.3},
+    {"fold": "avg", "period_start": "", "period_end": "",
+     "sharpe": 0.475, "ir_vs_market": 0.065, "max_drawdown": -0.40,
+     "active_ret_vs_market": 0.0045, "volatility": 0.16, "turnover": 0.35},
+])
+
+
+def test_load_wfe_results_returns_none_when_missing():
+    result = load_wfe_results(Path("/nonexistent/path"))
+    assert result is None
+
+
+def test_load_wfe_results_returns_dataframe(tmp_path):
+    _WFE_DATA.to_csv(tmp_path / "wfe_results.csv", index=False)
+    result = load_wfe_results(tmp_path)
+    assert isinstance(result, pd.DataFrame)
+    assert "sharpe" in result.columns
+
+
+def test_wfe_metrics_html_returns_string():
+    html = wfe_metrics_html(_WFE_DATA)
+    assert isinstance(html, str)
+    assert "<table" in html
+    assert "avg" in html.lower() or "Avg" in html
+
+
+def test_wfe_metrics_html_empty_df():
+    html = wfe_metrics_html(pd.DataFrame())
+    assert "No walk-forward" in html
+
+
+def test_wfe_folds_plot_returns_figure():
+    fig = wfe_folds_plot(_WFE_DATA, metric="sharpe")
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)
+
+
+def test_wfe_folds_plot_ir_metric():
+    fig = wfe_folds_plot(_WFE_DATA, metric="ir_vs_market")
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)

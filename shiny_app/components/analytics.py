@@ -306,3 +306,120 @@ def _metrics_comparison_html(df: pd.DataFrame, selected_te: int) -> str:
         "</table>"
         "<p style='font-size:10px;color:#6c757d;margin-top:4px'>★ = currently selected TE</p>"
     )
+
+
+# ── Walk-Forward Evaluation ──────────────────────────────────────────────────
+
+def load_wfe_results(output_dir: Path) -> pd.DataFrame | None:
+    path = Path(output_dir) / "wfe_results.csv"
+    if not path.exists():
+        return None
+    return pd.read_csv(path)
+
+
+def wfe_metrics_html(df: pd.DataFrame) -> str:
+    if df is None or df.empty:
+        return "<p class='text-muted'>No walk-forward results — enable Walk-Forward and run the model.</p>"
+
+    numeric_cols = ["sharpe", "ir_vs_market", "max_drawdown", "active_ret_vs_market", "turnover"]
+    display_cols = {
+        "sharpe":               "Sharpe",
+        "ir_vs_market":         "IR vs Mkt",
+        "max_drawdown":         "Max DD",
+        "active_ret_vs_market": "Active Ret",
+        "turnover":             "Turnover",
+    }
+    color_fn = {
+        "Sharpe":     lambda v: "#198754" if v >= 0.5 else ("#dc3545" if v < 0 else "inherit"),
+        "IR vs Mkt":  lambda v: "#198754" if v > 0 else "#dc3545",
+        "Max DD":     lambda v: "#dc3545",
+        "Active Ret": lambda v: "#198754" if v > 0 else "#dc3545",
+        "Turnover":   lambda v: "inherit",
+    }
+    fmt_fn = {
+        "Sharpe":     lambda v: f"{v:.3f}",
+        "IR vs Mkt":  lambda v: f"{v:.3f}",
+        "Max DD":     lambda v: f"{v * 100:.1f}%",
+        "Active Ret": lambda v: f"{v * 100:.2f}%",
+        "Turnover":   lambda v: f"{v:.4f}",
+    }
+
+    fold_rows = df[df["fold"] != "avg"]
+    avg_row   = df[df["fold"] == "avg"]
+
+    header = ("<tr style='border-bottom:2px solid #dee2e6'>"
+              "<th style='padding:5px 8px'>Fold</th>"
+              "<th style='padding:5px 8px'>Period</th>")
+    for col in numeric_cols:
+        header += f"<th style='padding:5px 8px;text-align:right'>{display_cols[col]}</th>"
+    header += "</tr>"
+
+    body = ""
+    for _, row in pd.concat([fold_rows, avg_row]).iterrows():
+        is_avg = row["fold"] == "avg"
+        bg     = "#fff8e1" if is_avg else "#f8f9fa"
+        fw     = "700"     if is_avg else "normal"
+        try:
+            fold_label = "Avg" if is_avg else int(float(row["fold"]))
+        except (TypeError, ValueError):
+            fold_label = str(row["fold"])
+        period_label = "" if is_avg else (
+            f"{str(row['period_start'])[:7]} – {str(row['period_end'])[:7]}"
+        )
+        row_html = (f"<tr style='background:{bg}'>"
+                    f"<td style='padding:5px 8px;font-weight:{fw}'>{fold_label}</td>"
+                    f"<td style='padding:5px 8px;color:#888;font-size:11px'>{period_label}</td>")
+        for col in numeric_cols:
+            disp  = display_cols[col]
+            val   = row.get(col, float("nan"))
+            try:
+                fval  = float(val)
+                color = color_fn[disp](fval)
+                txt   = fmt_fn[disp](fval)
+            except (TypeError, ValueError):
+                color, txt = "inherit", "—"
+            row_html += (f"<td style='padding:5px 8px;text-align:right;"
+                         f"color:{color};font-weight:{fw}'>{txt}</td>")
+        row_html += "</tr>"
+        body += row_html
+
+    return (f"<table class='table table-sm' style='max-width:750px'>"
+            f"<thead>{header}</thead><tbody>{body}</tbody></table>")
+
+
+def wfe_folds_plot(df: pd.DataFrame, metric: str = "sharpe") -> plt.Figure:
+    """Bar chart of a metric across walk-forward folds. Avg shown as dashed line."""
+    fold_rows = df[df["fold"] != "avg"].copy()
+    avg_rows  = df[df["fold"] == "avg"]
+
+    if fold_rows.empty:
+        return _blank_fig("No fold data")
+
+    fold_rows["fold"] = fold_rows["fold"].astype(str)
+    if metric not in fold_rows.columns:
+        return _blank_fig(f"Metric '{metric}' not in data")
+    values = fold_rows[metric].astype(float).values
+    labels = [f"F{r}" for r in fold_rows["fold"]]
+    colors = ["#198754" if v >= 0 else "#dc3545" for v in values]
+
+    fig, ax = plt.subplots(figsize=(10, 3))
+    ax.bar(labels, values, color=colors, alpha=0.85, edgecolor="white")
+    ax.axhline(0, color="black", linewidth=0.5)
+
+    if not avg_rows.empty:
+        try:
+            avg_val = float(avg_rows.iloc[0][metric])
+            ax.axhline(avg_val, color="#7c3aed", linewidth=1.5, linestyle="--",
+                       label=f"Avg {avg_val:.3f}")
+            ax.legend(fontsize=9)
+        except (KeyError, TypeError, ValueError):
+            pass
+
+    display = {"sharpe": "Sharpe Ratio", "ir_vs_market": "IR vs Market",
+               "max_drawdown": "Max Drawdown", "active_ret_vs_market": "Active Return",
+               "volatility": "Volatility", "turnover": "Turnover"}
+    ax.set_ylabel(display.get(metric, metric))
+    ax.set_title(f"{display.get(metric, metric)} by Walk-Forward Fold")
+    ax.grid(True, alpha=0.3, axis="y")
+    fig.tight_layout()
+    return fig
