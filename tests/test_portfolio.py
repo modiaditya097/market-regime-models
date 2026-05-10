@@ -83,3 +83,71 @@ def test_calibrate_omega_achieves_target_te():
     w_active = w_opt - w_bmk
     te = np.sqrt(252 * w_active @ Sigma @ w_active)
     assert abs(te - target_te) < 0.005, f"TE={te:.4f}, target={target_te:.4f}"
+
+
+from src.utils import FACTORS
+
+
+def test_compute_view_returns_2state_bear_is_negative():
+    """In 2-state mode, bear regime (label=1) gives negative view."""
+    N = 252 * 3
+    dates = pd.date_range("2000-01-03", periods=N, freq="B")
+    # factor returns: positive on first half (bull), negative on second half
+    ret = pd.Series(
+        [0.005] * (N // 2) + [-0.005] * (N - N // 2), index=dates
+    )
+    labels = pd.Series(
+        [0] * (N // 2) + [1] * (N - N // 2), index=dates
+    )
+    active_ret_history = {f: ret for f in FACTORS}
+    in_sample_labels   = {f: labels for f in FACTORS}
+    regime_labels_now  = {f: 1 for f in FACTORS}  # current: bear
+
+    q = compute_view_returns(regime_labels_now, active_ret_history, in_sample_labels)
+    assert (q < 0).all(), "Bear regime views should be negative"
+
+
+def test_compute_view_returns_3state_neutral_is_zero():
+    """In 3-state mode, neutral regime (label=1) gives q=0."""
+    N = 252 * 3
+    dates = pd.date_range("2000-01-03", periods=N, freq="B")
+    ret = pd.Series(np.random.randn(N) * 0.01, index=dates)
+    # Label 0=bull, 1=neutral, 2=bear
+    labels = pd.Series([0] * 84 + [1] * 84 + [2] * (N - 168), index=dates)
+    active_ret_history = {f: ret for f in FACTORS}
+    in_sample_labels   = {f: labels for f in FACTORS}
+    regime_labels_now  = {f: 1 for f in FACTORS}  # current: neutral
+
+    q = compute_view_returns(regime_labels_now, active_ret_history,
+                              in_sample_labels, n_components=3)
+    assert (q == 0.0).all(), "Neutral regime (label=1) views must be exactly 0"
+
+
+def test_compute_view_returns_3state_bear_label2_is_negative():
+    """In 3-state mode, bear regime (label=2) gives negative view."""
+    N = 252 * 3
+    dates = pd.date_range("2000-01-03", periods=N, freq="B")
+    ret = pd.Series([-0.005] * N, index=dates)  # always negative
+    labels = pd.Series([2] * N, index=dates)    # always bear
+    active_ret_history = {f: ret for f in FACTORS}
+    in_sample_labels   = {f: labels for f in FACTORS}
+    regime_labels_now  = {f: 2 for f in FACTORS}  # current: bear
+
+    q = compute_view_returns(regime_labels_now, active_ret_history,
+                              in_sample_labels, n_components=3)
+    assert (q < 0).all(), "Bear (label=2) views should be negative in 3-state"
+
+
+def test_compute_view_returns_3state_bull_label0_is_positive():
+    """In 3-state mode, bull regime (label=0) still gives positive view."""
+    N = 252 * 3
+    dates = pd.date_range("2000-01-03", periods=N, freq="B")
+    ret = pd.Series([0.005] * N, index=dates)   # always positive
+    labels = pd.Series([0] * N, index=dates)    # always bull
+    active_ret_history = {f: ret for f in FACTORS}
+    in_sample_labels   = {f: labels for f in FACTORS}
+    regime_labels_now  = {f: 0 for f in FACTORS}  # current: bull
+
+    q = compute_view_returns(regime_labels_now, active_ret_history,
+                              in_sample_labels, n_components=3)
+    assert (q > 0).all(), "Bull (label=0) views should be positive in 3-state"
