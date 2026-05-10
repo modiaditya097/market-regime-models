@@ -27,6 +27,20 @@ from shiny_app.components.layout import placeholder_card, section
 _FACTORS = ["value", "size", "quality", "growth", "momentum"]
 _STEP_RE = re.compile(r"\[(\d+)/(\d+)\](.*)$")
 
+_MACRO_KEYS = [
+    "vix_level", "dxy", "oil_ret", "gold_ret",
+    "real_yield", "unemployment", "consumer_sent",
+]
+_MACRO_LABELS = {
+    "vix_level":     "VIX Level (absolute)",
+    "dxy":           "Dollar Index (DXY)",
+    "oil_ret":       "Oil Returns (WTI)",
+    "gold_ret":      "Gold Returns",
+    "real_yield":    "10Y Real Yield",
+    "unemployment":  "Unemployment Rate",
+    "consumer_sent": "Consumer Sentiment",
+}
+
 _SIDEBAR_CSS = """
 <style>
 .model-sidebar { position: sticky; top: 1rem; }
@@ -39,14 +53,29 @@ _SIDEBAR_CSS = """
 def _load_param_defaults(project_root: Path) -> dict:
     cfg_path = project_root / "config.yaml"
     if not cfg_path.exists():
-        return {"jump_penalty": 50.0, "max_feats": 9.5, "risk_aversion": 2.5, "txn_cost": 5}
+        return {
+            "jump_penalty": 50.0, "max_feats": 9.5,
+            "risk_aversion": 2.5, "txn_cost": 5,
+            "data_start": "2000-01-01", "data_end": "2026-01-30",
+            "test_start": "2008-01-01", "n_components": "2",
+            "macro_enabled": _MACRO_KEYS,
+            "wfe_enabled": False, "n_folds": 6, "fold_test_months": "36",
+        }
     with open(cfg_path) as f:
         cfg = _yaml.safe_load(f)
     return {
-        "jump_penalty":  cfg["sjm"]["jump_penalty"],
-        "max_feats":     cfg["sjm"]["max_feats"],
-        "risk_aversion": cfg["black_litterman"]["risk_aversion"],
-        "txn_cost":      cfg["black_litterman"]["transaction_cost_bps"],
+        "jump_penalty":    cfg["sjm"]["jump_penalty"],
+        "max_feats":       cfg["sjm"]["max_feats"],
+        "risk_aversion":   cfg["black_litterman"]["risk_aversion"],
+        "txn_cost":        cfg["black_litterman"]["transaction_cost_bps"],
+        "data_start":      cfg["data"].get("start_date", "2000-01-01"),
+        "data_end":        cfg["data"].get("end_date", "2026-01-30"),
+        "test_start":      cfg["training"].get("test_start", "2008-01-01"),
+        "n_components":    str(cfg["sjm"].get("n_components", 2)),
+        "macro_enabled":   cfg.get("macro_features", {}).get("enabled", _MACRO_KEYS),
+        "wfe_enabled":     cfg.get("walk_forward", {}).get("enabled", False),
+        "n_folds":         cfg.get("walk_forward", {}).get("n_folds", 6),
+        "fold_test_months": str(cfg.get("walk_forward", {}).get("fold_test_months", 36)),
     }
 
 
@@ -58,32 +87,82 @@ def model_tab_ui(cfg: dict):
 
     sidebar = ui.sidebar(
         ui.HTML(_SIDEBAR_CSS),
+        # Anchor navigation
         ui.div(
             ui.tags.b("Sections"),
             ui.div(
-                ui.tags.a("Metrics",              href="#metrics"),
-                ui.tags.a("Cumulative Returns",   href="#returns"),
-                ui.tags.a("Rolling Sharpe",       href="#rolling-sharpe"),
-                ui.tags.a("Drawdown",             href="#drawdown"),
-                ui.tags.a("Realized TE",          href="#realized-te"),
-                ui.tags.a("Portfolio Weights",    href="#weights"),
-                ui.tags.a("Regime Plots",         href="#regimes"),
+                ui.tags.a("Metrics",           href="#metrics"),
+                ui.tags.a("Cumulative Returns", href="#returns"),
+                ui.tags.a("Rolling Sharpe",    href="#rolling-sharpe"),
+                ui.tags.a("Drawdown",          href="#drawdown"),
+                ui.tags.a("Realized TE",       href="#realized-te"),
+                ui.tags.a("Portfolio Weights", href="#weights"),
+                ui.tags.a("Regime Plots",      href="#regimes"),
                 class_="anchor-links",
             ),
-            class_="mb-3",
+            class_="mb-2",
         ),
         ui.hr(),
-        ui.input_select("te", "TE Target", choices=te_choices, selected=default_te),
+        # Accordion
+        ui.accordion(
+            # \u2500\u2500 Section 1: Run Configuration \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+            ui.accordion_panel(
+                "\u2699 Run Configuration",
+                ui.input_date("data_start", "Data Start",
+                              value=defaults["data_start"]),
+                ui.input_date("data_end",   "Data End",
+                              value=defaults["data_end"]),
+                ui.input_date("test_start", "Test Period Start",
+                              value=defaults["test_start"]),
+                ui.input_select("te", "TE Target", choices=te_choices,
+                                selected=default_te),
+                ui.div(ui.tags.b("Regime States"), class_="mt-2 mb-1"),
+                ui.input_radio_buttons(
+                    "n_components", label=None,
+                    choices={"2": "2-state", "3": "3-state"},
+                    selected=defaults["n_components"],
+                    inline=True,
+                ),
+                value="run_config",
+            ),
+            # \u2500\u2500 Section 2: Model Parameters \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+            ui.accordion_panel(
+                "\u2699 Model Parameters",
+                ui.input_numeric("jump_penalty", "Jump Penalty (\u03bb)",
+                                 value=defaults["jump_penalty"], step=1, min=1),
+                ui.input_numeric("max_feats",    "Feature Sparsity (\u03ba\u00b2)",
+                                 value=defaults["max_feats"], step=0.5, min=0.5),
+                ui.input_numeric("risk_aversion","Risk Aversion (\u03b4)",
+                                 value=defaults["risk_aversion"], step=0.1, min=0.1),
+                ui.input_numeric("txn_cost",     "Txn Cost (bps)",
+                                 value=defaults["txn_cost"], step=1, min=0),
+                value="model_params",
+            ),
+            # \u2500\u2500 Section 3: Macro Features \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+            ui.accordion_panel(
+                "\ud83d\udcca Macro Features",
+                *[
+                    ui.input_checkbox(
+                        k, _MACRO_LABELS[k],
+                        value=(k in defaults["macro_enabled"]),
+                    )
+                    for k in _MACRO_KEYS
+                ],
+                value="macro_features",
+            ),
+            # \u2500\u2500 Section 4: Walk-Forward \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+            ui.accordion_panel(
+                "\ud83d\udd01 Walk-Forward",
+                ui.input_checkbox("wfe_enabled", "Enable Walk-Forward",
+                                  value=defaults["wfe_enabled"]),
+                ui.output_ui("wfe_fold_controls"),
+                value="walk_forward",
+            ),
+            id="sidebar_accordion",
+            open="run_config",
+            multiple=False,
+        ),
         ui.hr(),
-        ui.div(ui.tags.b("\u2699 Parameters"), class_="mb-2"),
-        ui.input_numeric("jump_penalty", "Jump Penalty (\u03bb)",
-                         value=defaults["jump_penalty"], step=1, min=1),
-        ui.input_numeric("max_feats", "Feature Sparsity (\u03ba\u00b2)",
-                         value=defaults["max_feats"], step=0.5, min=0.5),
-        ui.input_numeric("risk_aversion", "Risk Aversion (\u03b4)",
-                         value=defaults["risk_aversion"], step=0.1, min=0.1),
-        ui.input_numeric("txn_cost", "Txn Cost (bps)",
-                         value=defaults["txn_cost"], step=1, min=0),
         ui.input_action_button(
             "rerun", "Run Model",
             class_="btn-primary btn-sm w-100 mt-2",
@@ -91,23 +170,17 @@ def model_tab_ui(cfg: dict):
         ),
         ui.output_ui("run_progress"),
         ui.output_ui("run_status"),
-        width=200,
+        width=230,
         class_="model-sidebar",
     )
 
-    main = ui.div(
-        section("Performance Metrics",     "metrics",
-                ui.output_ui("metrics_tbl")),
-        section("Cumulative Returns",      "returns",
-                ui.output_ui("returns_plot")),
-        section("Rolling Sharpe",          "rolling-sharpe",
-                ui.output_ui("rolling_sharpe_plot")),
-        section("Drawdown",                "drawdown",
-                ui.output_ui("drawdown_plot")),
-        section("Realized Tracking Error", "realized-te",
-                ui.output_ui("realized_te_plot")),
-        section("Portfolio Weights",       "weights",
-                ui.output_ui("weights_plot")),
+    results_content = ui.div(
+        section("Performance Metrics",     "metrics",       ui.output_ui("metrics_tbl")),
+        section("Cumulative Returns",      "returns",       ui.output_ui("returns_plot")),
+        section("Rolling Sharpe",          "rolling-sharpe",ui.output_ui("rolling_sharpe_plot")),
+        section("Drawdown",                "drawdown",      ui.output_ui("drawdown_plot")),
+        section("Realized Tracking Error", "realized-te",   ui.output_ui("realized_te_plot")),
+        section("Portfolio Weights",       "weights",       ui.output_ui("weights_plot")),
         section("Regime Plots",            "regimes",
                 ui.div(*[
                     ui.div(
@@ -120,6 +193,18 @@ def model_tab_ui(cfg: dict):
         style="padding:1rem",
     )
 
+    validation_content = ui.div(
+        section("Walk-Forward Results", "wfe-results",    ui.output_ui("wfe_metrics_tbl")),
+        section("Sharpe by Fold",       "wfe-sharpe",     ui.output_ui("wfe_sharpe_plot")),
+        section("IR vs Market by Fold", "wfe-ir",         ui.output_ui("wfe_ir_plot")),
+        style="padding:1rem",
+    )
+
+    main = ui.navset_tab(
+        ui.nav_panel("Results",    results_content),
+        ui.nav_panel("Validation", validation_content),
+    )
+
     return ui.layout_sidebar(sidebar, main)
 
 
@@ -127,6 +212,7 @@ def model_tab_ui(cfg: dict):
 def model_tab_server(input, output, session, cfg: dict, project_root: Path):
     output_dir = Path(cfg["output_dir"])
     run_cmd = cfg.get("run_command")
+    defaults = _load_param_defaults(project_root)
 
     running = reactive.value(False)
     run_log = reactive.value("")
@@ -147,10 +233,26 @@ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
         base_cfg_path = project_root / "config.yaml"
         with open(base_cfg_path) as f:
             cfg_data = _yaml.safe_load(f)
-        cfg_data["sjm"]["jump_penalty"]                     = float(input.jump_penalty())
-        cfg_data["sjm"]["max_feats"]                        = float(input.max_feats())
-        cfg_data["black_litterman"]["risk_aversion"]        = float(input.risk_aversion())
-        cfg_data["black_litterman"]["transaction_cost_bps"] = int(input.txn_cost())
+        cfg_data["data"]["start_date"]                          = str(input.data_start())
+        cfg_data["data"]["end_date"]                            = str(input.data_end())
+        cfg_data["training"]["test_start"]                      = str(input.test_start())
+        cfg_data["sjm"]["n_components"]                         = int(input.n_components())
+        cfg_data["sjm"]["jump_penalty"]                         = float(input.jump_penalty())
+        cfg_data["sjm"]["max_feats"]                            = float(input.max_feats())
+        cfg_data["black_litterman"]["risk_aversion"]            = float(input.risk_aversion())
+        cfg_data["black_litterman"]["transaction_cost_bps"]     = int(input.txn_cost())
+        cfg_data.setdefault("macro_features", {})["enabled"]   = [
+            k for k in _MACRO_KEYS if input[k]()
+        ]
+        wfe_on = bool(input.wfe_enabled())
+        cfg_data.setdefault("walk_forward", {})["enabled"]     = wfe_on
+        try:
+            cfg_data["walk_forward"]["n_folds"]          = int(input.n_folds())
+            cfg_data["walk_forward"]["fold_test_months"] = int(input.fold_test_months())
+        except Exception:
+            cfg_data["walk_forward"]["n_folds"]          = defaults["n_folds"]
+            cfg_data["walk_forward"]["fold_test_months"] = int(defaults["fold_test_months"])
+        cfg_data["black_litterman"]["target_tracking_error"]    = int(input.te()) / 100
         with open(tmp_cfg_path, "w") as f:
             _yaml.dump(cfg_data, f, default_flow_style=False)
         actual_cmd = run_cmd + ["--config", str(tmp_cfg_path)]
@@ -228,6 +330,49 @@ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
             ui.tags.pre(log, style="font-size:.7rem;max-height:120px;overflow-y:auto"),
             class_="mt-2",
         )
+
+    @render.ui
+    def wfe_fold_controls():
+        wfe_on = input.wfe_enabled()
+        style  = "" if wfe_on else "opacity:0.4;pointer-events:none"
+        return ui.div(
+            ui.input_slider("n_folds", "Folds", min=3, max=8,
+                            value=defaults["n_folds"], step=1),
+            ui.input_select(
+                "fold_test_months", "Test Window",
+                choices={"12": "12 months", "24": "24 months", "36": "36 months"},
+                selected=defaults["fold_test_months"],
+            ),
+            style=style,
+        )
+
+    @render.ui
+    def wfe_metrics_tbl():
+        from shiny_app.components.analytics import load_wfe_results, wfe_metrics_html
+        df = load_wfe_results(output_dir)
+        if df is None:
+            if input.wfe_enabled():
+                return ui.p("Run the model to generate walk-forward results.",
+                            class_="text-muted")
+            return ui.p("Enable Walk-Forward in the sidebar and run the model.",
+                        class_="text-muted")
+        return ui.HTML(wfe_metrics_html(df))
+
+    @render.ui
+    def wfe_sharpe_plot():
+        from shiny_app.components.analytics import load_wfe_results, wfe_folds_plot
+        df = load_wfe_results(output_dir)
+        if df is None:
+            return ui.div()
+        return fig_to_img(wfe_folds_plot(df, metric="sharpe"), alt="Sharpe by fold")
+
+    @render.ui
+    def wfe_ir_plot():
+        from shiny_app.components.analytics import load_wfe_results, wfe_folds_plot
+        df = load_wfe_results(output_dir)
+        if df is None:
+            return ui.div()
+        return fig_to_img(wfe_folds_plot(df, metric="ir_vs_market"), alt="IR by fold")
 
     @render.ui
     def metrics_tbl():
