@@ -84,3 +84,64 @@ def test_save_weights_csv(tmp_path):
     loaded = pd.read_csv(path, index_col=0, parse_dates=True)
     assert list(loaded.columns) == ["market", "value", "size", "quality", "growth", "momentum"]
     assert len(loaded) == 10
+
+
+from unittest.mock import patch
+
+def test_run_walk_forward_returns_dataframe_with_expected_columns():
+    from src.backtest import run_walk_forward
+    import numpy as np
+
+    np.random.seed(0)
+    N = 252 * 5
+    d = pd.date_range("2000-01-03", periods=N, freq="B")
+    total = pd.DataFrame(np.random.randn(N, 6) * 0.01, index=d,
+                         columns=["market","value","size","quality","growth","momentum"])
+    active = pd.DataFrame(np.random.randn(N, 5) * 0.005, index=d,
+                          columns=["value","size","quality","growth","momentum"])
+    rf_ser = pd.Series(np.full(N, 0.0001), index=d)
+    macro  = {
+        "vix": pd.Series(np.abs(np.random.randn(N)) + 15, index=d),
+        "y2":  pd.Series(np.full(N, 2.5), index=d),
+        "y10": pd.Series(np.full(N, 3.5), index=d),
+    }
+    data = {"total_returns": total, "active_returns": active, "rf": rf_ser, "macro": macro}
+    cfg = {
+        "data":     {"start_date": "2000-01-03", "end_date": "2004-12-31"},
+        "training": {"min_train_years": 1, "max_train_years": 3,
+                     "refit_freq": "M", "test_start": "2001-01-01"},
+        "sjm":      {"n_components": 2, "jump_penalty": 50.0, "max_feats": 9.5,
+                     "max_iter": 5, "n_init_jm": 2, "random_state": 42},
+        "black_litterman": {"risk_aversion": 2.5, "cov_halflife": 63, "tau": 0.05,
+                            "target_tracking_error": 0.03, "transaction_cost_bps": 5,
+                            "benchmark_rebalance_freq": "Q"},
+        "macro_features": {"enabled": []},
+        "walk_forward":   {"enabled": True, "n_folds": 2, "fold_test_months": 12},
+    }
+
+    # Mock the expensive pipeline steps
+    test_start = pd.Timestamp("2001-01-01")
+    test_dates = d[d >= test_start]
+    mock_labels = {f: pd.Series(np.zeros(len(test_dates), dtype=int), index=test_dates)
+                   for f in ["value","size","quality","growth","momentum"]}
+    mock_weights = pd.DataFrame(
+        np.ones((len(test_dates), 6)) / 6, index=test_dates,
+        columns=["market","value","size","quality","growth","momentum"]
+    )
+    mock_port_ret = pd.Series(np.random.randn(len(test_dates)) * 0.01, index=test_dates)
+
+    with patch("src.backtest.run_regime_detection", return_value=mock_labels), \
+         patch("src.backtest.run_portfolio_construction", return_value=mock_weights), \
+         patch("src.backtest.compute_portfolio_returns", return_value=mock_port_ret):
+        result = run_walk_forward(data, cfg)
+
+    assert isinstance(result, pd.DataFrame)
+    required_cols = {"fold", "period_start", "period_end", "sharpe",
+                     "ir_vs_market", "max_drawdown", "active_ret_vs_market",
+                     "volatility", "turnover"}
+    assert required_cols.issubset(set(result.columns))
+    # Last row is the average
+    assert result.iloc[-1]["fold"] == "avg"
+    # Non-avg rows count <= n_folds
+    data_rows = result[result["fold"] != "avg"]
+    assert len(data_rows) <= cfg["walk_forward"]["n_folds"]

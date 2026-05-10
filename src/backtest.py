@@ -11,6 +11,8 @@ from src.utils import (
     ASSETS, FACTORS, TRADING_DAYS,
     annualize_return, annualize_vol, sharpe_ratio, info_ratio, max_drawdown,
 )
+from src.regime import run_regime_detection
+from src.portfolio import run_portfolio_construction
 
 
 def compute_transaction_costs(weights: pd.DataFrame, cost_bps: float) -> pd.Series:
@@ -194,3 +196,124 @@ def plot_portfolio_weights(weights: pd.DataFrame, output_dir: str, te_suffix: st
     plt.savefig(path, dpi=150)
     plt.close()
     print(f"Saved {path}")
+
+
+def run_walk_forward(data: dict, cfg: dict) -> pd.DataFrame:
+    """
+    Expanding-window walk-forward evaluation.
+
+    For each fold: train on data_start → fold_test_start (expanding),
+    test on fold_test_start → fold_test_end.
+    Returns a DataFrame with one row per completed fold plus an average row.
+    """
+    total_ret  = data["total_returns"]
+    active_ret = data["active_returns"]
+    rf         = data["rf"]
+    macro      = data["macro"]
+
+    enabled = cfg.get("macro_features", {}).get("enabled", [])
+    factors = list(active_ret.columns)
+
+    test_start       = pd.Timestamp(cfg["training"]["test_start"])
+    n_folds          = cfg["walk_forward"]["n_folds"]
+    fold_test_months = cfg["walk_forward"]["fold_test_months"]
+    cost_bps         = cfg["black_litterman"]["transaction_cost_bps"]
+
+    rows = []
+    for fold in range(1, n_folds + 1):
+        fold_test_start = test_start + pd.DateOffset(months=(fold - 1) * fold_test_months)
+        fold_test_end   = fold_test_start + pd.DateOffset(months=fold_test_months)
+
+        mask = total_ret.index < fold_test_end
+        if mask.sum() == 0:
+            break
+        # Also skip fold if no data exists in the test window itself
+        if (total_ret.index >= fold_test_start).sum() == 0:
+            print(f"      Fold {fold}: no test-period data after {fold_test_start.date()}, skipping")
+            continue
+
+        fold_total  = total_ret[mask]
+        fold_active = active_ret[mask]
+        fold_rf     = rf[mask]
+        fold_macro  = {k: v[mask] for k, v in macro.items() if isinstance(v, pd.Series)}
+        fold_extras = {k: fold_macro[k] for k in enabled if k in fold_macro}
+
+        fold_cfg = {
+            **cfg,
+            "training": {**cfg["training"], "test_start": str(fold_test_start.date())},
+            "data":     {**cfg["data"], "end_date": str(fold_test_end.date())},
+        }
+
+        print(f"[{fold}/{n_folds}] walk-forward fold {fold} "
+              f"({fold_test_start.date()} – {fold_test_end.date()})")
+
+        try:
+            regime_labels = run_regime_detection(
+                {f: fold_active[f] for f in factors},
+                mkt_ret=fold_total["market"],
+                vix=fold_macro["vix"],
+                y2=fold_macro["y2"],
+                y10=fold_macro["y10"],
+                cfg=fold_cfg,
+                macro_extras=fold_extras,
+                enabled=enabled,
+            )
+
+            test_label_dates = {
+                f: regime_labels[f].index >= fold_test_start for f in factors
+            }
+            test_labels = {f: regime_labels[f][test_label_dates[f]] for f in factors}
+            # shift(-1) aligns regime labels to same-day returns:
+            # regime_labels carry a built-in 1-day delay (label at T = regime inferred from T-1),
+            # so shift(-1) maps label at T to the return realised at T, removing the delay offset
+            # for in-sample regime performance calculations.
+            in_sample_labels = {
+                f: test_labels[f].shift(-1).dropna().astype(int) for f in factors
+            }
+
+            weights = run_portfolio_construction(
+                test_labels,
+                in_sample_labels,
+                total_returns=fold_total,
+                active_returns=fold_active,
+                cfg=fold_cfg,
+            )
+
+            test_dates    = weights.index
+            port_ret      = compute_portfolio_returns(
+                weights, fold_total.reindex(test_dates), cost_bps=cost_bps
+            )
+            mkt_ret_fold  = fold_total["market"].reindex(test_dates)
+            ew_ret_fold   = compute_ew_returns(fold_total.reindex(test_dates))
+            rf_fold       = fold_rf.reindex(test_dates)
+
+            metrics = compute_performance_table(
+                port_ret, mkt_ret_fold, ew_ret_fold, rf_fold, weights
+            )
+            rows.append({
+                "fold":                 fold,
+                "period_start":         str(fold_test_start.date()),
+                "period_end":           str(fold_test_end.date()),
+                "sharpe":               metrics["sharpe"],
+                "ir_vs_market":         metrics["ir_vs_market"],
+                "max_drawdown":         metrics["max_drawdown"],
+                "active_ret_vs_market": metrics["active_ret_vs_market"],
+                "volatility":           metrics["volatility"],
+                "turnover":             metrics["turnover"],
+            })
+        except Exception as exc:
+            print(f"      Fold {fold} failed: {exc}")
+            continue
+
+    if not rows:
+        return pd.DataFrame(columns=["fold", "period_start", "period_end", "sharpe",
+                                     "ir_vs_market", "max_drawdown",
+                                     "active_ret_vs_market", "volatility", "turnover"])
+
+    df = pd.DataFrame(rows)
+    numeric_cols = ["sharpe", "ir_vs_market", "max_drawdown", "active_ret_vs_market",
+                    "volatility", "turnover"]
+    avg_row = {"fold": "avg", "period_start": "", "period_end": ""}
+    for col in numeric_cols:
+        avg_row[col] = df[col].mean()
+    return pd.concat([df, pd.DataFrame([avg_row])], ignore_index=True)
