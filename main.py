@@ -30,6 +30,7 @@ from src.backtest import (
     plot_regime,
     plot_portfolio_weights,
     save_returns_csv,
+    run_walk_forward,
 )
 
 
@@ -68,13 +69,17 @@ def main():
 
     # ── Step 3: Regime Detection ──────────────────────────────────────────────
     print("[3/5] Running SJM regime detection (this may take several minutes)...")
-    regime_labels = run_regime_detection(
+    enabled_extras = cfg.get("macro_features", {}).get("enabled", [])
+    macro_extras   = {k: macro[k] for k in enabled_extras if k in macro}
+    regime_labels  = run_regime_detection(
         active_rets_dict,
         mkt_ret=total_ret["market"],
         vix=macro["vix"],
         y2=macro["y2"],
         y10=macro["y10"],
         cfg=cfg,
+        macro_extras=macro_extras,
+        enabled=enabled_extras,
     )
     for f, labels in regime_labels.items():
         bull_pct = (labels == 0).mean() * 100
@@ -192,6 +197,23 @@ def main():
     for row in metrics_rows:
         print(f"  {row['strategy']:30s}  Sharpe={row['sharpe']:.2f}  "
               f"IR(vs EW)={row['ir_vs_ew']:.2f}  MDD={row['max_drawdown']*100:.1f}%")
+
+    # ── Phase 2: Walk-Forward Evaluation (optional) ──────────────────────────
+    if cfg.get("walk_forward", {}).get("enabled", False):
+        n_folds = cfg["walk_forward"]["n_folds"]
+        print(f"\nStarting walk-forward evaluation ({n_folds} folds)...")
+        wfe_df = run_walk_forward(data, cfg)
+        wfe_path = os.path.join(output_dir, "wfe_results.csv")
+        wfe_df.to_csv(wfe_path, index=False)
+        print(f"Walk-forward results saved to {wfe_path}")
+        avg_rows = wfe_df[wfe_df["fold"] == "avg"]
+        if not avg_rows.empty:
+            avg = avg_rows.iloc[0]
+            print(f"  Avg Sharpe: {avg['sharpe']:.3f}  "
+                  f"Avg IR: {avg['ir_vs_market']:.3f}  "
+                  f"Avg Max DD: {avg['max_drawdown']*100:.1f}%")
+        else:
+            print("  No completed folds — no average metrics available.")
 
 
 if __name__ == "__main__":
