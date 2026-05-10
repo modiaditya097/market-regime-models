@@ -87,6 +87,56 @@ def _fetch_vix(start: str, end: str) -> pd.Series:
     return s
 
 
+def _fetch_yf_log_return(ticker: str, start: str, end: str) -> pd.Series:
+    """Download a Yahoo Finance ticker and return daily log returns."""
+    raw = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
+    price = raw["Close"].squeeze()
+    price.index = pd.to_datetime(price.index).normalize()
+    return np.log(price / price.shift(1)).rename(ticker)
+
+
+def _fetch_vix_level(start: str, end: str) -> pd.Series:
+    raw = yf.download("^VIX", start=start, end=end, progress=False, auto_adjust=True)
+    s = raw["Close"].squeeze()
+    s.index = pd.to_datetime(s.index).normalize()
+    return np.log(s).rename("vix_level")
+
+
+def _fetch_dxy(start: str, end: str) -> pd.Series:
+    return _fetch_yf_log_return("DX-Y.NYB", start, end).rename("dxy")
+
+
+def _fetch_oil(start: str, end: str) -> pd.Series:
+    return _fetch_yf_log_return("CL=F", start, end).rename("oil_ret")
+
+
+def _fetch_gold(start: str, end: str) -> pd.Series:
+    return _fetch_yf_log_return("GC=F", start, end).rename("gold_ret")
+
+
+def _fetch_real_yield(start: str, end: str) -> pd.Series:
+    return _fetch_fred("REAINTRATREARAT10Y").rename("real_yield")
+
+
+def _fetch_unemployment(start: str, end: str) -> pd.Series:
+    return _fetch_fred("UNRATE").rename("unemployment")
+
+
+def _fetch_consumer_sent(start: str, end: str) -> pd.Series:
+    return _fetch_fred("UMCSENT").rename("consumer_sent")
+
+
+_MACRO_EXTRA_FETCHERS: dict = {
+    "vix_level":     _fetch_vix_level,
+    "dxy":           _fetch_dxy,
+    "oil_ret":       _fetch_oil,
+    "gold_ret":      _fetch_gold,
+    "real_yield":    _fetch_real_yield,
+    "unemployment":  _fetch_unemployment,
+    "consumer_sent": _fetch_consumer_sent,
+}
+
+
 def build_asset_returns(
     ff5: pd.DataFrame, mom: pd.DataFrame
 ) -> tuple:
@@ -119,12 +169,19 @@ def build_asset_returns(
     return total, active
 
 
-def load_macro(start: str, end: str) -> dict:
-    """Download VIX, 2Y yield, 10Y yield. Returns dict of aligned daily series."""
+def load_macro(start: str, end: str, enabled: list = None) -> dict:
+    """Download VIX, 2Y yield, 10Y yield, plus any enabled extra macro series.
+
+    enabled: list of keys from _MACRO_EXTRA_FETCHERS to also fetch.
+    """
     vix = _fetch_vix(start, end)
     y2  = _fetch_fred("DGS2")
     y10 = _fetch_fred("DGS10")
-    return {"vix": vix, "y2": y2, "y10": y10}
+    result = {"vix": vix, "y2": y2, "y10": y10}
+    for key in (enabled or []):
+        if key in _MACRO_EXTRA_FETCHERS:
+            result[key] = _MACRO_EXTRA_FETCHERS[key](start, end)
+    return result
 
 
 def load_all_data(cfg: dict) -> dict:
@@ -155,6 +212,17 @@ def load_all_data(cfg: dict) -> dict:
         rf     = pd.read_parquet(rf_path).iloc[:, 0]
         macro_df = pd.read_parquet(macro_path)
         macro  = {col: macro_df[col] for col in macro_df.columns}
+        # Load cached extras (fetch missing ones)
+        enabled_extras = cfg.get("macro_features", {}).get("enabled", [])
+        start, end = cfg["data"]["start_date"], cfg["data"]["end_date"]
+        for key in enabled_extras:
+            extra_path = cache_dir / f"macro_{key}.parquet"
+            if extra_path.exists():
+                macro[key] = pd.read_parquet(extra_path).iloc[:, 0]
+            elif key in _MACRO_EXTRA_FETCHERS:
+                s = _MACRO_EXTRA_FETCHERS[key](start, end)
+                macro[key] = s.reindex(total.index, method="ffill")
+                macro[key].to_frame().to_parquet(extra_path)
     else:
         # --- Ken French ---
         ff5_content = _fetch_zip_csv(_FF5_URL)
@@ -168,26 +236,37 @@ def load_all_data(cfg: dict) -> dict:
         total, active = build_asset_returns(ff5, mom)
         rf = ff5["RF"]
 
-        # --- Macro ---
-        macro_raw = load_macro(start, end)
-        # Forward-fill yields to trading days; align to factor index
+        # --- Core Macro (vix, y2, y10) ---
+        enabled_extras = cfg.get("macro_features", {}).get("enabled", [])
+        macro_raw = load_macro(start, end, enabled=enabled_extras)
         y2_aligned  = macro_raw["y2"].reindex(total.index, method="ffill")
         y10_aligned = macro_raw["y10"].reindex(total.index, method="ffill")
         vix_aligned = macro_raw["vix"].reindex(total.index, method="ffill")
         macro = {"vix": vix_aligned, "y2": y2_aligned, "y10": y10_aligned}
 
-        # Drop any dates with NaN in core data or macro series
-        macro_valid = pd.concat(list(macro.values()), axis=1).notna().all(axis=1)
-        valid = total.notna().all(axis=1) & active.notna().all(axis=1) & macro_valid
+        # --- Extra Macro Features ---
+        for key in enabled_extras:
+            if key in macro_raw:
+                macro[key] = macro_raw[key].reindex(total.index, method="ffill")
+
+        # Drop dates with NaN in core data
+        macro_core_valid = pd.concat([vix_aligned, y2_aligned, y10_aligned], axis=1).notna().all(axis=1)
+        valid = total.notna().all(axis=1) & active.notna().all(axis=1) & macro_core_valid
         total, active, rf = total[valid], active[valid], rf[valid]
         for k in macro:
             macro[k] = macro[k][valid]
 
-        # Cache
+        # Cache core
         total.to_parquet(total_path)
         active.to_parquet(active_path)
         rf.to_frame().to_parquet(rf_path)
-        pd.DataFrame(macro).to_parquet(macro_path)
+        pd.DataFrame({k: macro[k] for k in ["vix", "y2", "y10"]}).to_parquet(macro_path)
+
+        # Cache extras individually
+        for key in enabled_extras:
+            if key in macro:
+                extra_path = cache_dir / f"macro_{key}.parquet"
+                macro[key].to_frame().to_parquet(extra_path)
 
     return {
         "total_returns":  total,
