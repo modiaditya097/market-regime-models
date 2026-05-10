@@ -8,6 +8,7 @@ training:
   min_train_years: 8
   max_train_years: 12
   refit_freq: "M"
+  test_start: "2008-01-01"
 
 sjm:
   n_components: 2
@@ -28,3 +29,18 @@ black_litterman:
 output:
   results_path: "outputs/results.csv"
   plots_dir: "outputs/plots"
+
+macro_features:
+  enabled:
+    - vix_level
+    - dxy
+    - oil_ret
+    - gold_ret
+    - real_yield
+    - unemployment
+    - consumer_sent
+
+walk_forward:
+  enabled: false
+  n_folds: 6
+  fold_test_months: 36
