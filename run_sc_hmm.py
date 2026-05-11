@@ -1,5 +1,5 @@
 """
-SC-HMM Phase 3 — Standalone Pipeline Script
+SC-HMM Phase 3 -- Standalone Pipeline Script
 ============================================
 Equivalent of main.py for the SC-HMM model.
 
@@ -43,16 +43,16 @@ from collections import Counter
 from pathlib import Path
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # [1/6] SETTINGS & PARAMETERS
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
 def _step(n, total, msg):
     print(f'[{n}/{total}] {msg}', flush=True)
 
 
 def load_params(args):
-    """Merge CLI args → env vars → defaults. CLI wins over env, env wins over defaults."""
+    """Merge CLI args -> env vars -> defaults. CLI wins over env, env wins over defaults."""
     def _env(key, default, cast=str):
         v = os.environ.get(key)
         return cast(v) if v is not None else default
@@ -89,9 +89,9 @@ def load_params(args):
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # [2/6] DATA LOADING
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
 def fetch_weekly_prices(tickers, start, end):
     frames = {}
@@ -114,7 +114,7 @@ def load_data(p):
     prices_raw = fetch_weekly_prices(p['ASSETS'], start=p['DATA_START'], end=p['DATA_END']).sort_index()
     prices_raw = prices_raw[[a for a in p['ASSETS'] if a in prices_raw.columns]]
     prices     = prices_raw.dropna()
-    assert len(prices) > 0, 'prices empty — check tickers or date range'
+    assert len(prices) > 0, 'prices empty -- check tickers or date range'
 
     ret    = prices.pct_change().dropna()
     assets = ret.columns.tolist()
@@ -135,15 +135,15 @@ def load_data(p):
     prices      = prices.loc[first_valid:]
 
     assert macro.isna().sum().sum() == 0, f'Macro NaNs remain: {macro.isna().sum()}'
-    print(f'  Prices  : {prices.index[0].date()} → {prices.index[-1].date()} | {len(prices)} weeks')
-    print(f'  Returns : {ret.index[0].date()} → {ret.index[-1].date()} | N={len(ret)}')
-    print(f'  Macro   : {macro.index[0].date()} → {macro.index[-1].date()} | {len(macro)} obs')
+    print(f'  Prices  : {prices.index[0].date()} -> {prices.index[-1].date()} | {len(prices)} weeks')
+    print(f'  Returns : {ret.index[0].date()} -> {ret.index[-1].date()} | N={len(ret)}')
+    print(f'  Macro   : {macro.index[0].date()} -> {macro.index[-1].date()} | {len(macro)} obs')
     return prices, ret, assets, macro
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # [3/6] FEATURE CONSTRUCTION
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
 def rolling_corr_safe(df_win, min_obs=13):
     m     = df_win.shape[1]
@@ -214,13 +214,13 @@ def build_features(ret_df, assets, p):
         all_rows.append(row)
 
     X = np.nan_to_num(np.array(all_rows, dtype=float))
-    print(f'  Features: {X.shape[1]} per obs × {X.shape[0]} obs | corr flags: {flag_count}')
+    print(f'  Features: {X.shape[1]} per obs x {X.shape[0]} obs | corr flags: {flag_count}')
     return X
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # [4/6] SPECTRAL CLUSTERING + WALK-FORWARD BACKTEST
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
 def self_tuning_sigma(X, k):
     n = X.shape[0]; k = max(1, min(k, n - 1))
@@ -423,13 +423,13 @@ def run_backtest(ret, assets, X_full, macro, macro_score_full, vix_z_full, p):
     print(f'  Done. Refits={n_refits} | Obs={len(store["dates"])}')
     print(f'  Mapping rules: {dict(refit_rule_cnt)}')
     K_arr = np.array(store['K_at_t'])
-    print(f'  Dynamic K — mean={K_arr.mean():.2f}  K=2: {(K_arr==2).mean():.1%}  K=3: {(K_arr==3).mean():.1%}')
+    print(f'  Dynamic K -- mean={K_arr.mean():.2f}  K=2: {(K_arr==2).mean():.1%}  K=3: {(K_arr==3).mean():.1%}')
     return store, ALLOC
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # [5/6] SMOOTHING, BENCHMARKS & METRICS
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
 def smooth_regimes(regimes, window):
     out = []
@@ -494,9 +494,9 @@ def build_benchmarks(bt_ret, N_ASSETS, dates_bt):
     return bh_spy, static_6040, static_5a, rp_ret, ew_5
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # [6/6] SAVE ALL DASHBOARD OUTPUTS
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
 def save_outputs(dates_bt, ret_sm_hard, ret_sm_overlay, bh_spy, static_6040,
                  static_5a, rp_ret, ew_5, reg_smooth, ov_reg_smooth,
@@ -521,21 +521,21 @@ def save_outputs(dates_bt, ret_sm_hard, ret_sm_overlay, bh_spy, static_6040,
         ('  Static 5-Asset Blend',static_5a),
     ]
 
-    # ── returns_te3.csv ──────────────────────────────────────────────────────
+    # -- returns_te3.csv ------------------------------------------------------
     pd.DataFrame({
         'date': dates_bt, 'portfolio': ret_sm_hard, 'market': bh_spy, 'ew': ew_5,
     }).to_csv(output_dir / 'returns_te3.csv', index=False)
-    print('  ✓ returns_te3.csv')
+    print('  [ok] returns_te3.csv')
 
-    # ── metrics CSVs ─────────────────────────────────────────────────────────
+    # -- metrics CSVs ---------------------------------------------------------
     full_m = np.ones(len(dates_bt), dtype=bool)
     for fname, mask in [('metrics_full.csv', full_m), ('metrics_train.csv', train_m),
                         ('metrics_test.csv', test_m)]:
         rows = [{'Strategy': n, **compute_metrics(s[mask])} for n, s in STRAT_LIST]
         pd.DataFrame(rows).to_csv(output_dir / fname, index=False)
-    print('  ✓ metrics_full/train/test.csv')
+    print('  [ok] metrics_full/train/test.csv')
 
-    # ── results.csv (Comparison tab) ─────────────────────────────────────────
+    # -- results.csv (Comparison tab) -----------------------------------------
     r = ret_sm_hard
     vol   = float(r.std(ddof=1) * np.sqrt(ann))
     cagr  = float(np.cumprod(1 + r)[-1] ** (ann / len(r)) - 1)
@@ -552,9 +552,9 @@ def save_outputs(dates_bt, ret_sm_hard, ret_sm_overlay, bh_spy, static_6040,
         'max_drawdown': round(max_dd, 2), 'volatility': round(vol * 100, 2),
         'active_ret_vs_market': round(act * 100, 2), 'turnover': round(turnover, 3),
     }]).to_csv(output_dir / 'results.csv', index=False)
-    print('  ✓ results.csv')
+    print('  [ok] results.csv')
 
-    # ── stress / bull tables ─────────────────────────────────────────────────
+    # -- stress / bull tables -------------------------------------------------
     STRAT_SUB = {'SC-HMM': ret_sm_hard, 'Macro Overlay': ret_sm_overlay,
                  'SPY B&H': bh_spy, 'Risk Parity': rp_ret, 'Static 60/40': static_6040}
     for fname, periods in [('stress_table.csv', STRESS_PERIODS), ('bull_table.csv', BULL_PERIODS)]:
@@ -567,9 +567,9 @@ def save_outputs(dates_bt, ret_sm_hard, ret_sm_overlay, bh_spy, static_6040,
                 row[sn] = f'{float((np.cumprod(1 + ser[mask]) - 1)[-1]):.1%}'
             rows.append(row)
         pd.DataFrame(rows).to_csv(output_dir / fname, index=False)
-    print('  ✓ stress_table.csv, bull_table.csv')
+    print('  [ok] stress_table.csv, bull_table.csv')
 
-    # ── macro_latest.csv ─────────────────────────────────────────────────────
+    # -- macro_latest.csv -----------------------------------------------------
     lat = macro.iloc[-1]
     vix_v = float(lat['VIXCLS']); curve = float(lat['T10Y2Y']); hy = float(lat['BAMLH0A0HYM2'])
     pd.DataFrame([
@@ -580,17 +580,17 @@ def save_outputs(dates_bt, ret_sm_hard, ret_sm_overlay, bh_spy, static_6040,
         {'indicator': 'HY Spread',         'value': f'{hy:.2f}%',
          'signal': 'bear' if hy > 4.5 else 'bull' if hy < 3.0 else 'neutral'},
     ]).to_csv(output_dir / 'macro_latest.csv', index=False)
-    print('  ✓ macro_latest.csv')
+    print('  [ok] macro_latest.csv')
 
-    # ── k_analysis.csv ───────────────────────────────────────────────────────
+    # -- k_analysis.csv -------------------------------------------------------
     K_arr = np.array(store['K_at_t'])
     pd.DataFrame([
         {'K': 2, 'Frequency': f'{(K_arr==2).mean():.1%}', 'Weeks': int((K_arr==2).sum())},
         {'K': 3, 'Frequency': f'{(K_arr==3).mean():.1%}', 'Weeks': int((K_arr==3).sum())},
     ]).to_csv(output_dir / 'k_analysis.csv', index=False)
-    print('  ✓ k_analysis.csv')
+    print('  [ok] k_analysis.csv')
 
-    # ── PLOTS ─────────────────────────────────────────────────────────────────
+    # -- PLOTS -----------------------------------------------------------------
 
     def stress_shade(ax):
         for _, (s, e) in STRESS_PERIODS.items():
@@ -611,7 +611,7 @@ def save_outputs(dates_bt, ret_sm_hard, ret_sm_overlay, bh_spy, static_6040,
     ax.yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
     ax.legend(fontsize=9, ncol=3); ax.grid(alpha=0.3); plt.tight_layout()
     fig.savefig(PLOTS_DIR / 'cumulative_returns.png', dpi=150, bbox_inches='tight'); plt.close(fig)
-    print('  ✓ plots/cumulative_returns.png')
+    print('  [ok] plots/cumulative_returns.png')
 
     # Drawdown
     fig, ax = plt.subplots(figsize=(14, 4))
@@ -624,7 +624,7 @@ def save_outputs(dates_bt, ret_sm_hard, ret_sm_overlay, bh_spy, static_6040,
     ax.yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
     ax.legend(fontsize=9); ax.grid(alpha=0.3); plt.tight_layout()
     fig.savefig(PLOTS_DIR / 'drawdown.png', dpi=150, bbox_inches='tight'); plt.close(fig)
-    print('  ✓ plots/drawdown.png')
+    print('  [ok] plots/drawdown.png')
 
     # Rolling Sharpe
     fig, ax = plt.subplots(figsize=(14, 4))
@@ -638,7 +638,7 @@ def save_outputs(dates_bt, ret_sm_hard, ret_sm_overlay, bh_spy, static_6040,
     ax.set_title('SC-HMM Phase 3: Rolling 52-Week Sharpe', fontsize=12, fontweight='bold')
     ax.legend(fontsize=9, ncol=3); ax.grid(alpha=0.3); plt.tight_layout()
     fig.savefig(PLOTS_DIR / 'rolling_sharpe.png', dpi=150, bbox_inches='tight'); plt.close(fig)
-    print('  ✓ plots/rolling_sharpe.png')
+    print('  [ok] plots/rolling_sharpe.png')
 
     # Portfolio weights
     colors5 = ['#2980b9','#27ae60','#e74c3c','#8e44ad','#f1c40f']
@@ -655,7 +655,7 @@ def save_outputs(dates_bt, ret_sm_hard, ret_sm_overlay, bh_spy, static_6040,
         ax.legend(ncol=6, fontsize=8, loc='upper left'); ax.grid(alpha=0.2)
     plt.tight_layout()
     fig.savefig(PLOTS_DIR / 'portfolio_weights.png', dpi=150, bbox_inches='tight'); plt.close(fig)
-    print('  ✓ plots/portfolio_weights.png')
+    print('  [ok] plots/portfolio_weights.png')
 
     # Regime timeline
     fig, axes = plt.subplots(2, 1, figsize=(14, 5), sharex=True)
@@ -672,7 +672,7 @@ def save_outputs(dates_bt, ret_sm_hard, ret_sm_overlay, bh_spy, static_6040,
         ax.legend(loc='upper left', ncol=5, fontsize=8)
     plt.tight_layout()
     fig.savefig(PLOTS_DIR / 'regime_timeline.png', dpi=150, bbox_inches='tight'); plt.close(fig)
-    print('  ✓ plots/regime_timeline.png')
+    print('  [ok] plots/regime_timeline.png')
 
     # Transition matrix
     fig, ax = plt.subplots(figsize=(5.5, 4.5))
@@ -685,14 +685,14 @@ def save_outputs(dates_bt, ret_sm_hard, ret_sm_overlay, bh_spy, static_6040,
                     color='white' if v > 0.55 else '#1a1a2e',
                     fontweight='bold' if i == j else 'normal')
     ax.set_xticks(range(len(lbs))); ax.set_yticks(range(len(lbs)))
-    ax.set_xticklabels([f'→{l.capitalize()}' for l in lbs], fontsize=9)
+    ax.set_xticklabels([f'->{l.capitalize()}' for l in lbs], fontsize=9)
     ax.set_yticklabels([l.capitalize() for l in lbs], fontsize=9)
-    ax.set_title('Transition Matrix P[i→j]', fontsize=11, fontweight='bold')
+    ax.set_title('Transition Matrix P[i->j]', fontsize=11, fontweight='bold')
     for i in range(len(lbs)):
         ax.add_patch(plt.Rectangle((i-.5, i-.5), 1, 1, fill=False, edgecolor='#e74c3c', lw=2))
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04); plt.tight_layout()
     fig.savefig(PLOTS_DIR / 'transition_matrix.png', dpi=150, bbox_inches='tight'); plt.close(fig)
-    print('  ✓ plots/transition_matrix.png')
+    print('  [ok] plots/transition_matrix.png')
 
     # Annual heatmap
     strats_ann = {'SC-HMM': ret_sm_hard, 'Macro Overlay': ret_sm_overlay,
@@ -723,18 +723,18 @@ def save_outputs(dates_bt, ret_sm_hard, ret_sm_overlay, bh_spy, static_6040,
     plt.colorbar(im2, ax=ax, fraction=0.02, pad=0.02, format=mticker.PercentFormatter(1.0))
     plt.tight_layout()
     fig.savefig(PLOTS_DIR / 'annual_heatmap.png', dpi=150, bbox_inches='tight'); plt.close(fig)
-    print('  ✓ plots/annual_heatmap.png')
+    print('  [ok] plots/annual_heatmap.png')
 
     # Risk-return scatter
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    fig.suptitle('Risk-Return Profile — Full Period & OOS', fontsize=12, fontweight='bold')
+    fig.suptitle('Risk-Return Profile -- Full Period & OOS', fontsize=12, fontweight='bold')
     sc_colors_map = {'SC-HMM': C['hard'], 'Macro Overlay': C['overlay'],
                      'Buy-Hold SPY': C['spy'], 'Risk Parity': C['rp'],
                      'Static 60/40': C['s6040'], '5-Asset Blend': C['s5a']}
     for ax, mask, period_label in zip(
             axes, [np.ones(len(dates_bt), dtype=bool), test_m],
-            [f'Full Period ({dates_bt[0].year}–{dates_bt[-1].year})',
-             f'OOS Only (≥ {p["TEST_START"]})']):
+            [f'Full Period ({dates_bt[0].year}-{dates_bt[-1].year})',
+             f'OOS Only (>= {p["TEST_START"]})']):
         for name, series in strats_ann.items():
             r = series[mask]
             if len(r) < 10: continue
@@ -753,14 +753,14 @@ def save_outputs(dates_bt, ret_sm_hard, ret_sm_overlay, bh_spy, static_6040,
         ax.set_title(period_label, fontsize=10); ax.grid(alpha=0.3)
     plt.tight_layout()
     fig.savefig(PLOTS_DIR / 'risk_return_scatter.png', dpi=150, bbox_inches='tight'); plt.close(fig)
-    print('  ✓ plots/risk_return_scatter.png')
+    print('  [ok] plots/risk_return_scatter.png')
 
-    print(f'\n✅ All outputs saved to: {output_dir.resolve()}')
+    print(f'\n[ok] All outputs saved to: {output_dir.resolve()}')
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # MAIN
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
 def main():
     parser = argparse.ArgumentParser(description='SC-HMM Phase 3 Pipeline')
