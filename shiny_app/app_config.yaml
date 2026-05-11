@@ -17,7 +17,7 @@ models:
     name: "Simple-HMM (S&P 500)"
     description: "3-state Hidden Markov Model. Training: 2000–2014. Test: 2015–2026."
     output_dir: "outputs/simple_hmm"
-    module: "shiny_app.modules.generic_model_tab"
+    module: "shiny_app.modules.simple_hmm"
     te_targets: [0.03]
     run_command: ["python", "run_user_models.py", "--model", "simple_hmm"]
 
@@ -25,7 +25,7 @@ models:
     name: "MS-GARCH (S&P 500)"
     description: "Markov-Switching GARCH model with volatility-based regime switching. Training: 2000–2014. Test: 2015–2026."
     output_dir: "outputs/msgarch"
-    module: "shiny_app.modules.generic_model_tab"
+    module: "shiny_app.modules.msgarch"
     te_targets: [0.03]
     run_command: ["python", "run_user_models.py", "--model", "msgarch"]
 
@@ -33,7 +33,7 @@ models:
     name: "HMM (S&P 500)"
     description: "5-state multi-feature Hidden Markov Model. Training: 2000–2014. Test: 2015–2026."
     output_dir: "outputs/hmm"
-    module: "shiny_app.modules.generic_model_tab"
+    module: "shiny_app.modules.hmm"
     te_targets: [0.03]
     run_command: ["python", "run_user_models.py", "--model", "hmm"]
 
