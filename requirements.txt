@@ -10,3 +10,5 @@ shiny>=0.9
 yfinance>=0.2
 scipy>=1.11
 scikit-learn>=1.3
+hmmlearn>=0.3
+statsmodels>=0.14
