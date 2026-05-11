@@ -41,6 +41,6 @@ models:
     name: "HSMM (S&P 500)"
     description: "5-state Hidden Semi-Markov Model with explicit duration modeling. Training: 2000–2014. Test: 2015–2026."
     output_dir: "outputs/hsmm"
-    module: "shiny_app.modules.generic_model_tab"
+    module: "shiny_app.modules.hsmm"
     te_targets: [0.03]
     run_command: ["python", "run_user_models.py", "--model", "hsmm"]
