@@ -96,6 +96,14 @@ def comparison_server(input, output, session, all_cfg: dict):
         plt.tight_layout()
         return fig
 
+    # Columns whose magnitude tells us which storage convention is used:
+    # SJM+BL writes raw ratios (volatility 0.196 = 19.6%), the HMM-family
+    # runners pre-multiply (volatility 10.95). Realistic ann. vol ≥ ~5%
+    # and realistic |Max DD| ≥ ~2%, so any |value| < 1 here is a decimal
+    # fraction that needs scaling. Sharpe / IR / Turnover are unitless
+    # ratios and stay as-is.
+    _SCALE_IF_FRACTION = {"max_drawdown", "volatility", "active_ret_vs_market"}
+
     @render.table
     def metrics_tbl():
         te = int(input.te())
@@ -110,7 +118,11 @@ def comparison_server(input, output, session, all_cfg: dict):
                 if raw_col == "strategy":
                     continue
                 if not df.empty and raw_col in df.columns:
-                    row[raw_col] = df.iloc[0][raw_col]
+                    val = df.iloc[0][raw_col]
+                    # Normalize storage convention to percent display.
+                    if raw_col in _SCALE_IF_FRACTION and pd.notna(val) and abs(val) < 1:
+                        val = val * 100
+                    row[raw_col] = val
                 else:
                     row[raw_col] = "—"
             rows.append(row)
