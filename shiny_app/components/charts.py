@@ -9,10 +9,15 @@ from shiny import ui
 _DISPLAY_COLS = {
     "strategy": "Strategy",
     "sharpe": "Sharpe",
+    "sortino": "Sortino",
+    "calmar": "Calmar",
     "ir_vs_market": "IR vs Mkt",
     "max_drawdown": "Max DD",
     "volatility": "Volatility",
     "active_ret_vs_market": "Active Ret",
+    "var_95": "VaR (95%)",
+    "cvar_95": "CVaR (95%)",
+    "win_rate": "Win Rate",
     "turnover": "Turnover",
 }
 
