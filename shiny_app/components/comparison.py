@@ -9,9 +9,24 @@ import pandas as pd
 
 from shiny import module, ui, render
 
-from shiny_app.components.charts import load_returns_df, load_metrics_row, _DISPLAY_COLS
+from shiny_app.components.charts import load_returns_df, load_metrics_row
 
 _COLORS = ["#7c3aed", "#10b981", "#f97316", "#e11d48", "#0ea5e9", "#eab308", "#8b5cf6"]
+
+# Only the metrics that are populated for ALL models. Per-model tabs render
+# the richer set (Sortino, Calmar, VaR, CVaR, Win Rate) from _DISPLAY in their
+# own module — those columns are NaN for SJM+BL / SC-HMM / MS-GARCH / HMM /
+# HSMM today, so they're omitted here to keep the comparison table clean.
+# "strategy" is listed first so it shows up as the row label.
+_COMPARE_COLS = {
+    "strategy":             "Strategy",
+    "sharpe":               "Sharpe",
+    "ir_vs_market":         "IR vs Mkt",
+    "max_drawdown":         "Max DD",
+    "volatility":           "Volatility",
+    "active_ret_vs_market": "Active Ret",
+    "turnover":             "Turnover",
+}
 
 
 @module.ui
@@ -84,15 +99,22 @@ def comparison_server(input, output, session, all_cfg: dict):
     @render.table
     def metrics_tbl():
         te = int(input.te())
-        _PLACEHOLDER = {k: "—" for k in _DISPLAY_COLS.keys()}
         rows = []
         for model_cfg in all_cfg["models"]:
             df = load_metrics_row(Path(model_cfg["output_dir"]), te_pct=te)
-            if df.empty:
-                row = dict(_PLACEHOLDER)
-                row["strategy"] = model_cfg["name"]
-            else:
-                row = df.iloc[0].to_dict()
-                row["strategy"] = model_cfg["name"]
+            # Build the row in the order _COMPARE_COLS declares so the
+            # final DataFrame has Strategy as the first column and only
+            # the shared metrics afterward.
+            row = {"strategy": model_cfg["name"]}
+            for raw_col in _COMPARE_COLS:
+                if raw_col == "strategy":
+                    continue
+                if not df.empty and raw_col in df.columns:
+                    row[raw_col] = df.iloc[0][raw_col]
+                else:
+                    row[raw_col] = "—"
             rows.append(row)
-        return pd.DataFrame(rows).rename(columns=_DISPLAY_COLS)
+        return (
+            pd.DataFrame(rows, columns=list(_COMPARE_COLS.keys()))
+              .rename(columns=_COMPARE_COLS)
+        )

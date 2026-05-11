@@ -276,7 +276,7 @@ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
         run_log.set("⏳ Pipeline running…")
 
         # Build parameter env vars so the script can read them
-        import os, subprocess
+        import os, subprocess, sys
         env = os.environ.copy()
         env["SCHMM_ASSETS"]               = ",".join(list(input.assets()))
         env["SCHMM_K_MIN"]                = str(int(input.k_min()))
@@ -288,8 +288,13 @@ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
         env["SCHMM_MACRO_EXTREME_THRESH"] = str(float(input.macro_extreme_thresh()))
         env["SCHMM_TC_BPS"]              = str(int(input.tc_bps()))
 
+        # Use the same interpreter as the Shiny app (the venv) so the
+        # subprocess inherits installed packages — see runner.py for details.
+        cmd = list(run_cmd)
+        if cmd and Path(cmd[0]).name.lower() in {"python", "python.exe"}:
+            cmd[0] = sys.executable
         proc = subprocess.Popen(
-            run_cmd,
+            cmd,
             cwd=str(project_root),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

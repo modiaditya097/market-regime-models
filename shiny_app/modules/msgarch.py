@@ -163,31 +163,21 @@ def model_tab_ui(cfg: dict):
         class_="model-sidebar",
     )
 
-    if not output_dir.exists():
-        main = ui.div(
-            ui.div(
-                ui.div(
-                    ui.h4("Results not yet available"),
-                    ui.p("Outputs not generated yet. Click 'Run Model' in the sidebar to generate.", class_="text-muted"),
-                    class_="card-body text-center py-5",
-                ),
-                class_="card my-4",
-                style="max-width:600px;margin:auto",
-            ),
-            style="padding:1rem",
-        )
-    else:
-        main = ui.div(
-            section("📊 Performance Metrics & Risk Analysis", "metrics", ui.output_ui("metrics_tbl")),
-            section("📈 Cumulative Returns", "returns", ui.output_ui("returns_img")),
-            section("📉 Drawdown Analysis", "drawdown", ui.output_ui("drawdown_img")),
-            section("⚡ Rolling 52-Week Sharpe", "sharpe", ui.output_ui("sharpe_img")),
-            section("🔴 Regime Timeline", "timeline", ui.output_ui("timeline_img")),
-            section("📊 Regime Characteristics", "chars", ui.output_ui("chars_img")),
-            section("🔁 Transition Matrix", "transition", ui.output_ui("transition_img")),
-            section("📅 Monthly Returns Heatmap", "heatmap", ui.output_ui("heatmap_img")),
-            style="padding:1rem",
-        )
+    # Always render the section layout — img_tag handles missing plots
+    # gracefully ("Plot not found"), and removing the static
+    # output_dir.exists() guard means the UI updates as soon as the
+    # subprocess writes new files (no need to reload the page).
+    main = ui.div(
+        section("📊 Performance Metrics & Risk Analysis", "metrics", ui.output_ui("metrics_tbl")),
+        section("📈 Cumulative Returns", "returns", ui.output_ui("returns_img")),
+        section("📉 Drawdown Analysis", "drawdown", ui.output_ui("drawdown_img")),
+        section("⚡ Rolling 52-Week Sharpe", "sharpe", ui.output_ui("sharpe_img")),
+        section("🔴 Regime Timeline", "timeline", ui.output_ui("timeline_img")),
+        section("📊 Regime Characteristics", "chars", ui.output_ui("chars_img")),
+        section("🔁 Transition Matrix", "transition", ui.output_ui("transition_img")),
+        section("📅 Monthly Returns Heatmap", "heatmap", ui.output_ui("heatmap_img")),
+        style="padding:1rem",
+    )
 
     return ui.layout_sidebar(sidebar, main)
 
