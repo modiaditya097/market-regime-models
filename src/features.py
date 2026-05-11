@@ -1,4 +1,4 @@
-"""17-feature engineering per factor for the Sparse Jump Model."""
+"""Feature engineering per factor for the Sparse Jump Model (17 base + configurable macro extras)."""
 
 import numpy as np
 import pandas as pd
@@ -56,6 +56,17 @@ def compute_active_beta(factor_ret: pd.Series, mkt_ret: pd.Series, span: int) ->
     return (cov / var).rename(f"beta_{span}")
 
 
+_MACRO_FEATURE_BUILDERS: dict = {
+    "vix_level":     lambda s: s.rename("vix_level"),
+    "dxy":           lambda s: s.ewm(span=21, adjust=False).mean().rename("dxy_21"),
+    "oil_ret":       lambda s: s.ewm(span=21, adjust=False).mean().rename("oil_ret_21"),
+    "gold_ret":      lambda s: s.ewm(span=21, adjust=False).mean().rename("gold_ret_21"),
+    "real_yield":    lambda s: s.diff().ewm(span=21, adjust=False).mean().rename("real_yield_diff_21"),
+    "unemployment":  lambda s: s.diff().ewm(span=21, adjust=False).mean().rename("unemployment_diff_21"),
+    "consumer_sent": lambda s: s.diff().ewm(span=21, adjust=False).mean().rename("consumer_sent_diff_21"),
+}
+
+
 def compute_factor_features(active_ret: pd.Series, mkt_ret: pd.Series) -> pd.DataFrame:
     """13 factor-specific features for one factor's active return series."""
     parts = []
@@ -77,14 +88,25 @@ def compute_market_features(
     vix: pd.Series,
     y2: pd.Series,
     y10: pd.Series,
+    macro_extras: dict = None,
+    enabled: list = None,
 ) -> pd.DataFrame:
-    """4 market-environment features shared across all factors."""
+    """4 always-on market features plus any enabled extras."""
     mkt_feat    = mkt_ret.ewm(span=21, adjust=False).mean().rename("mkt_ret_21")
     vix_logret  = np.log(vix / vix.shift(1))
     vix_feat    = vix_logret.ewm(span=21, adjust=False).mean().rename("vix_21")
     y2_diff     = y2.diff().ewm(span=21, adjust=False).mean().rename("y2_diff_21")
     slope_diff  = (y10 - y2).diff().ewm(span=21, adjust=False).mean().rename("slope_diff_21")
-    return pd.concat([mkt_feat, vix_feat, y2_diff, slope_diff], axis=1)
+    parts = [mkt_feat, vix_feat, y2_diff, slope_diff]
+
+    extras = macro_extras or {}
+    seen: set = set()
+    for key in (enabled or []):
+        if key in extras and key in _MACRO_FEATURE_BUILDERS and key not in seen:
+            parts.append(_MACRO_FEATURE_BUILDERS[key](extras[key]))
+            seen.add(key)
+
+    return pd.concat(parts, axis=1)
 
 
 def compute_all_features(
@@ -93,12 +115,12 @@ def compute_all_features(
     vix: pd.Series,
     y2: pd.Series,
     y10: pd.Series,
+    macro_extras: dict = None,
+    enabled: list = None,
 ) -> dict:
-    """
-    Compute 17-feature matrix for each factor.
-    Returns dict[factor_name -> pd.DataFrame with 17 columns].
-    """
-    mkt_feats = compute_market_features(mkt_ret, vix, y2, y10)
+    """17+ feature matrix for each factor (13 factor-specific + 4+ market)."""
+    mkt_feats = compute_market_features(mkt_ret, vix, y2, y10,
+                                        macro_extras=macro_extras, enabled=enabled)
     result = {}
     for factor, ret in active_rets.items():
         factor_feats = compute_factor_features(ret, mkt_ret)

@@ -53,26 +53,36 @@ def run_regime_detection(
     y2: pd.Series,
     y10: pd.Series,
     cfg: dict,
+    macro_extras: dict = None,
+    enabled: list = None,
 ) -> dict:
     """
     Monthly expanding-window SJM refit + online inference for each factor.
 
-    Returns dict[factor -> pd.Series of regime labels (0=bull, 1=bear)].
+    Returns dict[factor -> pd.Series of regime labels (0=bull, 1=bear, [2=neutral]).
     Labels use a 1-day delay: label on day T reflects inference from day T-1.
     """
     data_start = pd.Timestamp(cfg["data"]["start_date"])
-    min_years = cfg["training"]["min_train_years"]
-    max_years = cfg["training"]["max_train_years"]
+    min_years  = cfg["training"]["min_train_years"]
+    max_years  = cfg["training"]["max_train_years"]
 
-    # Compute all features once
-    features_dict = compute_all_features(active_rets, mkt_ret, vix, y2, y10)
+    # Pass macro_extras through to feature engineering
+    features_dict = compute_all_features(
+        active_rets, mkt_ret, vix, y2, y10,
+        macro_extras=macro_extras or {},
+        enabled=enabled or [],
+    )
 
-    # Full date index
     all_dates = features_dict[next(iter(features_dict))].dropna(how="all").index
 
-    # Test period starts after min training years
-    test_start = data_start + pd.DateOffset(years=min_years)
+    # Use explicit test_start from config if present; else derive from min_train_years
+    if "test_start" in cfg.get("training", {}):
+        test_start = pd.Timestamp(cfg["training"]["test_start"])
+    else:
+        test_start = data_start + pd.DateOffset(years=min_years)
+
     test_dates = all_dates[all_dates >= test_start]
+    # ── everything below this line is IDENTICAL to the original ──────────────
 
     if len(test_dates) == 0:
         return {f: pd.Series(dtype=float) for f in active_rets}

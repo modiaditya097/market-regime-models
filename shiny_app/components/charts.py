@@ -1,4 +1,5 @@
 import base64
+import io
 from pathlib import Path
 
 import pandas as pd
@@ -14,6 +15,21 @@ _DISPLAY_COLS = {
     "active_ret_vs_market": "Active Ret",
     "turnover": "Turnover",
 }
+
+
+def fig_to_img(fig, alt: str = "") -> ui.Tag:
+    """Convert a matplotlib Figure to an inline <img> tag via base64 PNG."""
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight", dpi=120)
+    buf.seek(0)
+    encoded = base64.b64encode(buf.read()).decode()
+    import matplotlib.pyplot as plt
+    plt.close(fig)
+    return ui.img(
+        src=f"data:image/png;base64,{encoded}",
+        alt=alt,
+        style="width:100%;max-width:1000px;display:block;margin:auto",
+    )
 
 
 def img_tag(path: Path, alt: str = "") -> ui.Tag:

@@ -70,3 +70,38 @@ def test_build_asset_returns():
     # active return = total - market
     assert active['value'].iloc[0] == pytest.approx(ff5['HML'].iloc[0])
     assert active['growth'].iloc[0] == pytest.approx(-ff5['CMA'].iloc[0])
+
+
+from unittest.mock import patch, MagicMock
+
+def _make_fake_series(name, n=300):
+    dates = pd.date_range("2000-01-03", periods=n, freq="B")
+    return pd.Series(np.abs(np.random.randn(n)) + 1.0, index=dates, name=name)
+
+def test_load_macro_empty_enabled_returns_three_keys():
+    fake_vix = _make_fake_series("VIX")
+    fake_y   = _make_fake_series("DGS2")
+    with patch("src.data._fetch_vix", return_value=fake_vix), \
+         patch("src.data._fetch_fred", return_value=fake_y):
+        from src.data import load_macro
+        result = load_macro("2000-01-01", "2001-01-01", enabled=[])
+    assert set(result.keys()) == {"vix", "y2", "y10"}
+
+def test_load_macro_enabled_adds_extra_keys():
+    fake_series = _make_fake_series("fake")
+    with patch("src.data._fetch_vix", return_value=fake_series), \
+         patch("src.data._fetch_fred", return_value=fake_series), \
+         patch("src.data._fetch_yf_log_return", return_value=fake_series):
+        from src.data import load_macro
+        result = load_macro("2000-01-01", "2001-01-01", enabled=["dxy", "oil_ret"])
+    assert "dxy"     in result
+    assert "oil_ret" in result
+    assert "vix"     in result  # base keys still present
+
+def test_load_macro_unknown_key_is_ignored():
+    fake_series = _make_fake_series("fake")
+    with patch("src.data._fetch_vix", return_value=fake_series), \
+         patch("src.data._fetch_fred", return_value=fake_series):
+        from src.data import load_macro
+        result = load_macro("2000-01-01", "2001-01-01", enabled=["nonexistent_key"])
+    assert "nonexistent_key" not in result

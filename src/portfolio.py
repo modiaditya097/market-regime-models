@@ -83,21 +83,33 @@ def compute_view_returns(
     regime_labels: dict,
     active_ret_history: dict,
     in_sample_labels: dict,
+    n_components: int = 2,
 ) -> np.ndarray:
     """
     q[k] = mean daily active return of factor k during its current regime
            computed over the training period.
     Capped at ±5%/252 (daily equivalent of ±5% annualized).
+
+    3-state convention (n_components=3):
+      label 0 = bull  → positive view
+      label 1 = neutral → q[k] = 0 (no view, posterior reverts to prior)
+      label 2 = bear  → negative view
     """
     cap = 0.05 / TRADING_DAYS
     q = np.zeros(5)
     for i, factor in enumerate(FACTORS):
         current_regime = regime_labels.get(factor, 0)
-        ret_hist = active_ret_history[factor]
+
+        # Neutral state in 3-state mode → no view
+        if n_components == 3 and current_regime == 1:
+            q[i] = 0.0
+            continue
+
+        ret_hist    = active_ret_history[factor]
         labels_hist = in_sample_labels[factor]
-        aligned = labels_hist.reindex(ret_hist.index).dropna()
+        aligned     = labels_hist.reindex(ret_hist.index).dropna()
         ret_aligned = ret_hist.reindex(aligned.index)
-        mask = aligned == current_regime
+        mask        = aligned == current_regime
         if mask.sum() > 0:
             q[i] = float(ret_aligned[mask].mean())
         q[i] = float(np.clip(q[i], -cap, cap))
@@ -165,7 +177,9 @@ def compute_portfolio_weights(
     w_bmk = np.ones(N_ASSETS) / N_ASSETS
     Sigma  = compute_ewm_covariance(total_ret_history, halflife)
     P      = compute_view_matrix()
-    q      = compute_view_returns(today_regime, active_ret_history, in_sample_labels)
+    n_components = cfg.get("sjm", {}).get("n_components", 2)
+    q      = compute_view_returns(today_regime, active_ret_history, in_sample_labels,
+                                  n_components=n_components)
     pi     = delta * Sigma @ w_bmk
     Omega  = calibrate_omega(P, Sigma, tau, w_bmk, delta, q, target_te)
     mu_bl  = compute_bl_posterior(pi, Sigma, P, q, tau, Omega)

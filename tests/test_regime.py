@@ -79,3 +79,26 @@ def test_one_day_delay():
     for f, ser in labels.items():
         if len(ser.dropna()) > 0:
             assert ser.dropna().index[0] >= test_start
+
+
+def test_run_regime_detection_respects_test_start():
+    """Regime labels should not exist before test_start."""
+    import numpy as np
+    N = 252 * 10
+    dates = pd.date_range("2000-01-03", periods=N, freq="B")
+    active = {"value": pd.Series(np.random.randn(N) * 0.01, index=dates)}
+    mkt    = pd.Series(np.random.randn(N) * 0.01, index=dates)
+    vix    = pd.Series(np.abs(np.random.randn(N)) + 15.0, index=dates)
+    y2     = pd.Series(np.full(N, 2.5), index=dates)
+    y10    = pd.Series(np.full(N, 3.5), index=dates)
+    cfg = {
+        "data":     {"start_date": "2000-01-03"},
+        "training": {"min_train_years": 8, "max_train_years": 12,
+                     "refit_freq": "M", "test_start": "2009-01-01"},
+        "sjm":      {"n_components": 2, "jump_penalty": 50.0, "max_feats": 9.5,
+                     "max_iter": 5, "n_init_jm": 2, "random_state": 42},
+    }
+    result = run_regime_detection(active, mkt, vix, y2, y10, cfg)
+    labels = result["value"]
+    assert (labels.index >= pd.Timestamp("2009-01-01")).all(), \
+        "Labels exist before test_start"
