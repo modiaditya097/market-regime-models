@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -9,6 +10,7 @@ import yaml as _yaml
 
 from shiny import module, ui, render, reactive
 
+from shiny_app.utils.runner import run_pipeline
 from shiny_app.components.analytics import (
     load_weights_df,
     load_regimes_df,
@@ -140,7 +142,7 @@ def model_tab_ui(cfg: dict):
             ),
             # \u2500\u2500 Section 3: Macro Features \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
             ui.accordion_panel(
-                "\ud83d\udcca Macro Features",
+                "Macro Features",
                 *[
                     ui.input_checkbox(
                         k, _MACRO_LABELS[k],
@@ -152,7 +154,7 @@ def model_tab_ui(cfg: dict):
             ),
             # \u2500\u2500 Section 4: Walk-Forward \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
             ui.accordion_panel(
-                "\ud83d\udd01 Walk-Forward",
+                "Walk-Forward",
                 ui.input_checkbox("wfe_enabled", "Enable Walk-Forward",
                                   value=defaults["wfe_enabled"]),
                 ui.output_ui("wfe_fold_controls"),
@@ -163,13 +165,7 @@ def model_tab_ui(cfg: dict):
             multiple=False,
         ),
         ui.hr(),
-        ui.input_action_button(
-            "rerun", "Run Model",
-            class_="btn-primary btn-sm w-100 mt-2",
-            disabled=cfg.get("run_command") is None,
-        ),
-        ui.output_ui("run_progress"),
-        ui.output_ui("run_status"),
+        ui.output_ui("run_btn_area"),
         width=230,
         class_="model-sidebar",
     )
@@ -214,10 +210,25 @@ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
     run_cmd = cfg.get("run_command")
     defaults = _load_param_defaults(project_root)
 
-    running = reactive.value(False)
-    run_log = reactive.value("")
+    running      = reactive.value(False)
+    run_log      = reactive.value("")
     progress_pct = reactive.value(0)
-    step_msg = reactive.value("")
+    step_msg     = reactive.value("")
+    _proc        = reactive.value(None)   # live subprocess (Popen) reference
+    _cancelled   = reactive.value(False)
+    refresh_trigger = reactive.value(0)  # incremented after successful run
+    run_start_ts = reactive.value(0.0)   # monotonic seconds at run start
+
+    @reactive.effect
+    @reactive.event(input.cancel_run)
+    def _cancel_pipeline():
+        proc = _proc()
+        _cancelled.set(True)
+        if proc is not None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
     @reactive.effect
     @reactive.event(input.rerun)
@@ -225,9 +236,12 @@ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
         if run_cmd is None or running():
             return
         running.set(True)
+        _cancelled.set(False)
         run_log.set("")
         progress_pct.set(0)
         step_msg.set("Starting...")
+        run_start_ts.set(time.monotonic())
+        await asyncio.sleep(0)   # flush running=True to browser before sync work
 
         tmp_cfg_path = project_root / "outputs" / "tmp_config.yaml"
         base_cfg_path = project_root / "config.yaml"
@@ -257,79 +271,140 @@ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
             _yaml.dump(cfg_data, f, default_flow_style=False)
         actual_cmd = run_cmd + ["--config", str(tmp_cfg_path)]
 
+        proc = run_pipeline(actual_cmd, project_root)
+        _proc.set(proc)
+        log_lines = []
+        loop = asyncio.get_event_loop()
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *actual_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                cwd=str(project_root),
-            )
-            lines = []
-            async for raw in proc.stdout:
-                line = raw.decode("utf-8", errors="replace").rstrip()
-                lines.append(line)
+            while True:
+                # Offload blocking readline to a thread so the asyncio event
+                # loop stays free — Shiny can flush progress/cancel to browser
+                # between every line without waiting for the next one.
+                line = await loop.run_in_executor(None, proc.stdout.readline)
+                if not line:
+                    break  # EOF — process finished or was killed
+                line = line.rstrip()
+                log_lines.append(line)
                 m = _STEP_RE.search(line)
                 if m:
-                    current, total, desc = int(m.group(1)), int(m.group(2)), m.group(3).strip()
-                    progress_pct.set(int(current / total * 100))
-                    step_msg.set(f"[{current}/{total}] {desc}")
-            await proc.wait()
-            if proc.returncode == 0:
-                progress_pct.set(100)
-                step_msg.set("Complete")
-                run_log.set("Pipeline finished successfully.")
-            else:
-                step_msg.set("Failed")
-                run_log.set("\n".join(lines[-20:]))
+                    cur, total, desc = int(m.group(1)), int(m.group(2)), m.group(3).strip()
+                    progress_pct.set(int(cur / total * 100))
+                    step_msg.set(f"[{cur}/{total}] {desc}")
+                await asyncio.sleep(0)  # yield so Shiny flushes updates to browser
         except Exception as exc:
             step_msg.set("Error")
             run_log.set(str(exc))
         finally:
+            rc = proc.wait()
+            if _cancelled():
+                step_msg.set("Cancelled")
+                run_log.set("Run cancelled by user.")
+                _cancelled.set(False)
+            elif rc == 0:
+                progress_pct.set(100)
+                step_msg.set("Complete")
+                run_log.set("Pipeline finished successfully.")
+                refresh_trigger.set(refresh_trigger() + 1)
+            else:
+                step_msg.set("Failed")
+                run_log.set("\n".join(log_lines[-20:]))
             running.set(False)
+            _proc.set(None)
             if tmp_cfg_path.exists():
                 tmp_cfg_path.unlink()
 
     @render.ui
-    def run_progress():
-        if not running() and progress_pct() == 0:
-            return ui.div()
-        pct = progress_pct()
-        msg = step_msg()
+    def run_btn_area():
         is_running = running()
-        bar_class = "progress-bar progress-bar-striped progress-bar-animated" if is_running else "progress-bar"
-        status_color = "#198754" if pct == 100 else ("#dc3545" if msg == "Failed" else "#0d6efd")
-        indicator = ui.div(
-            ui.tags.span(
-                "● Running" if is_running else ("✓ Done" if pct == 100 else "✗ Failed"),
-                style=f"font-size:.75rem;color:{status_color};font-weight:600",
-            ),
-            class_="mt-2",
-        )
-        return ui.div(
-            indicator,
-            ui.div(
+        pct        = progress_pct()
+        msg        = step_msg()
+        can_run    = run_cmd is not None
+        if is_running:
+            # Force this UI to re-render every 1s so elapsed time ticks even
+            # when no new [X/N] step line has arrived from the subprocess.
+            reactive.invalidate_later(1)
+            elapsed = int(time.monotonic() - run_start_ts())
+            mins, secs = divmod(elapsed, 60)
+            elapsed_str = f"{mins}:{secs:02d}"
+            return ui.div(
                 ui.div(
-                    class_=bar_class,
-                    role="progressbar",
-                    style=f"width:{pct}%",
-                    **{"aria-valuenow": str(pct), "aria-valuemin": "0", "aria-valuemax": "100"},
+                    ui.tags.span(
+                        f"Running... {pct}%",
+                        style="font-size:.75rem;font-weight:600;color:#0d6efd",
+                    ),
+                    ui.tags.span(
+                        f"  elapsed {elapsed_str}",
+                        style="font-size:.7rem;color:#6c757d;margin-left:.4rem",
+                    ),
+                    class_="mt-2 mb-1",
                 ),
-                class_="progress mt-1",
-                style="height:8px",
+                ui.div(
+                    ui.div(
+                        class_="progress-bar progress-bar-striped progress-bar-animated",
+                        role="progressbar",
+                        style=f"width:{max(pct, 2)}%;transition:width .4s ease",
+                        **{"aria-valuenow": str(pct),
+                           "aria-valuemin": "0",
+                           "aria-valuemax": "100"},
+                    ),
+                    class_="progress",
+                    style="height:10px",
+                ),
+                ui.div(
+                    msg if msg else "",
+                    style="font-size:.7rem;color:#6c757d;margin-top:4px",
+                ) if msg else ui.div(),
+                ui.input_action_button(
+                    "cancel_run", "Cancel Run",
+                    class_="btn-outline-danger btn-sm w-100 mt-2",
+                ),
+                class_="mt-2",
+            )
+        return ui.div(
+            ui.input_action_button(
+                "rerun", "Run Model",
+                class_="btn-primary btn-sm w-100 mt-2",
+                disabled=not can_run,
+                title=(
+                    "SJM regime detection typically takes 3-10 minutes depending on "
+                    "the date range and macro features selected. Results update "
+                    "automatically when complete."
+                ),
             ),
-            ui.div(msg, style="font-size:.7rem;color:#6c757d;margin-top:2px") if msg else ui.div(),
-            class_="mt-2",
         )
 
     @render.ui
-    def run_status():
-        log = run_log()
-        if not log:
-            return ui.div()
-        return ui.div(
-            ui.tags.pre(log, style="font-size:.7rem;max-height:120px;overflow-y:auto"),
-            class_="mt-2",
-        )
+    def run_controls():
+        is_running = running()
+        msg        = step_msg()
+        log        = run_log()
+        pct        = progress_pct()
+
+        parts = []
+
+        # Current step message
+        if msg and msg not in ("Starting...",) and is_running:
+            parts.append(ui.div(msg, style="font-size:.7rem;color:#6c757d;margin-top:4px"))
+
+        # Post-run status + log
+        if not is_running and (pct > 0 or log):
+            if pct == 100:
+                color, label = "#198754", "Done"
+            elif msg in ("Cancelled",):
+                color, label = "#6c757d", "Cancelled"
+            else:
+                color, label = "#dc3545", "Failed"
+            parts.append(ui.div(
+                ui.tags.span(label, style=f"font-size:.75rem;font-weight:600;color:{color}"),
+                class_="mt-2",
+            ))
+            if log:
+                parts.append(ui.div(
+                    ui.tags.pre(log, style="font-size:.7rem;max-height:100px;overflow-y:auto"),
+                    class_="mt-1",
+                ))
+
+        return ui.div(*parts) if parts else ui.div()
 
     @render.ui
     def wfe_fold_controls():
@@ -376,31 +451,37 @@ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
 
     @render.ui
     def metrics_tbl():
+        refresh_trigger()
         df = load_all_metrics(output_dir)
         return ui.HTML(_metrics_comparison_html(df, selected_te=int(input.te())))
 
     @render.ui
     def returns_plot():
+        refresh_trigger()
         df = load_returns_df(output_dir, te_pct=int(input.te()))
         return fig_to_img(_cum_returns_chart(df), alt="Cumulative returns")
 
     @render.ui
     def weights_plot():
+        refresh_trigger()
         wdf = load_weights_df(output_dir, te_pct=int(input.te()))
         return fig_to_img(_weights_chart(wdf), alt="Portfolio weights")
 
     @render.ui
     def rolling_sharpe_plot():
+        refresh_trigger()
         df = load_returns_df(output_dir, te_pct=int(input.te()))
         return fig_to_img(_rolling_sharpe_chart(df), alt="Rolling Sharpe")
 
     @render.ui
     def drawdown_plot():
+        refresh_trigger()
         df = load_returns_df(output_dir, te_pct=int(input.te()))
         return fig_to_img(_drawdown_chart(df), alt="Drawdown")
 
     @render.ui
     def realized_te_plot():
+        refresh_trigger()
         df = load_returns_df(output_dir, te_pct=int(input.te()))
         return fig_to_img(_realized_te_chart(df, target_te=int(input.te()) / 100), alt="Realized TE")
 
@@ -408,6 +489,7 @@ def model_tab_server(input, output, session, cfg: dict, project_root: Path):
         @output(id=f"regime_{f}_plot")
         @render.ui
         def _regime():
+            refresh_trigger()
             reg          = load_regimes_df(output_dir)
             parquet_path = output_dir / "cache" / "active_returns.parquet"
             if not parquet_path.exists():
