@@ -105,25 +105,53 @@ def calculate_strategy_returns(returns, regimes, bear_regime, transaction_cost=0
 
 
 def calculate_metrics(strategy_returns, market_returns):
-    """Calculate performance metrics."""
+    """Calculate comprehensive performance and risk metrics."""
     strategy_cum = (1 + strategy_returns).cumprod()[-1] - 1
     market_cum = (1 + market_returns).cumprod()[-1] - 1
+    
+    # Basic metrics
     strategy_sharpe = np.sqrt(252) * strategy_returns.mean() / strategy_returns.std() if strategy_returns.std() > 0 else 0
     strategy_vol = np.sqrt(252) * strategy_returns.std()
+    
+    # Drawdown
     strategy_cum_series = (1 + strategy_returns).cumprod()
     strategy_running_max = np.maximum.accumulate(strategy_cum_series)
     strategy_dd = ((strategy_cum_series - strategy_running_max) / strategy_running_max).min()
+    
+    # Tracking error and IR
     tracking_error = (strategy_returns - market_returns).std() * np.sqrt(252)
     ir = (strategy_cum - market_cum) / tracking_error if tracking_error > 0 else 0
+    
+    # Risk metrics
+    # Sortino ratio (downside deviation)
+    downside_returns = strategy_returns[strategy_returns < 0]
+    downside_std = np.sqrt(np.mean(downside_returns**2)) if len(downside_returns) > 0 else strategy_returns.std()
+    sortino = np.sqrt(252) * strategy_returns.mean() / downside_std if downside_std > 0 else 0
+    
+    # Calmar ratio (return / max drawdown)
+    annual_return = (1 + strategy_cum)**(252/len(strategy_returns)) - 1
+    calmar = annual_return / abs(strategy_dd) if strategy_dd != 0 else 0
+    
+    # VaR and CVaR (95% confidence)
+    var_95 = np.percentile(strategy_returns, 5) * np.sqrt(252) * 100
+    cvar_95 = strategy_returns[strategy_returns <= np.percentile(strategy_returns, 5)].mean() * np.sqrt(252) * 100
+    
+    # Win rate
+    win_rate = (strategy_returns > 0).sum() / len(strategy_returns) * 100
 
     return {
         'total_return': strategy_cum * 100,
         'market_return': market_cum * 100,
         'outperformance': (strategy_cum - market_cum) * 100,
         'sharpe': strategy_sharpe,
+        'sortino': sortino,
+        'calmar': calmar,
         'volatility': strategy_vol * 100,
         'max_drawdown': strategy_dd * 100,
         'ir_vs_market': ir,
+        'var_95': var_95,
+        'cvar_95': cvar_95,
+        'win_rate': win_rate,
     }
 
 
@@ -133,10 +161,15 @@ def save_results_csv(output_dir, metrics, n_trades, total_days):
     results_df = pd.DataFrame([{
         'target_te': 0.03,
         'sharpe': metrics['sharpe'],
+        'sortino': metrics['sortino'],
+        'calmar': metrics['calmar'],
         'ir_vs_market': metrics['ir_vs_market'],
         'max_drawdown': metrics['max_drawdown'],
         'volatility': metrics['volatility'],
         'active_return': metrics['outperformance'],
+        'var_95': metrics['var_95'],
+        'cvar_95': metrics['cvar_95'],
+        'win_rate': metrics['win_rate'],
         'turnover': turnover,
     }])
     results_df.to_csv(output_dir / 'results.csv', index=False)
@@ -249,6 +282,79 @@ def plot_transition_matrix(output_dir, regimes, n_states):
     plt.close()
 
 
+def plot_drawdown(output_dir, test_data, strategy_returns):
+    """Plot drawdown over time."""
+    strategy_cum_series = (1 + pd.Series(strategy_returns)).cumprod()
+    strategy_running_max = np.maximum.accumulate(strategy_cum_series)
+    drawdown = (strategy_cum_series - strategy_running_max) / strategy_running_max
+    
+    fig, ax = plt.subplots(figsize=(12, 5))
+    dates = test_data.index[:len(strategy_returns)]
+    ax.fill_between(dates, drawdown * 100, 0, alpha=0.3, color='#dc3545')
+    ax.plot(dates, drawdown * 100, color='#dc3545', linewidth=1.5)
+    ax.set_title('Strategy Drawdown', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Drawdown (%)')
+    ax.grid(True, alpha=0.3)
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=0.8)
+    plt.tight_layout()
+    plt.savefig(output_dir / 'plots/drawdown.png', dpi=100)
+    plt.close()
+
+
+def plot_rolling_sharpe(output_dir, test_data, strategy_returns):
+    """Plot rolling 52-week Sharpe ratio."""
+    returns_series = pd.Series(strategy_returns, index=test_data.index[:len(strategy_returns)])
+    rolling_sharpe = returns_series.rolling(window=252).apply(
+        lambda x: np.sqrt(252) * x.mean() / x.std() if x.std() > 0 else 0
+    )
+    
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.plot(rolling_sharpe.index, rolling_sharpe.values, color='#2196F3', linewidth=2)
+    ax.axhline(y=0, color='black', linestyle='--', linewidth=0.8, alpha=0.5)
+    ax.axhline(y=1, color='green', linestyle='--', linewidth=0.8, alpha=0.5, label='Sharpe = 1')
+    ax.set_title('Rolling 52-Week Sharpe Ratio', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Sharpe Ratio')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_dir / 'plots/rolling_sharpe.png', dpi=100)
+    plt.close()
+
+
+def plot_annual_heatmap(output_dir, test_data, strategy_returns):
+    """Plot annual returns heatmap."""
+    returns_series = pd.Series(strategy_returns, index=test_data.index[:len(strategy_returns)])
+    
+    # Calculate monthly returns
+    monthly_returns = returns_series.resample('ME').apply(lambda x: (1 + x).prod() - 1)
+    
+    # Pivot to year x month
+    monthly_returns_df = pd.DataFrame({
+        'year': monthly_returns.index.year,
+        'month': monthly_returns.index.month,
+        'return': monthly_returns.values * 100
+    })
+    
+    if len(monthly_returns_df) == 0:
+        return
+    
+    pivot = monthly_returns_df.pivot(index='year', columns='month', values='return')
+    
+    fig, ax = plt.subplots(figsize=(12, max(4, len(pivot) * 0.4)))
+    sns.heatmap(pivot, annot=True, fmt='.1f', cmap='RdYlGn', center=0, 
+                cbar_kws={'label': 'Return (%)'}, ax=ax, linewidths=0.5)
+    ax.set_title('Monthly Returns Heatmap (%)', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Month')
+    ax.set_ylabel('Year')
+    month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    ax.set_xticklabels(month_labels, rotation=0)
+    plt.tight_layout()
+    plt.savefig(output_dir / 'plots/annual_heatmap.png', dpi=100)
+    plt.close()
+
+
 # ── Model Runners ────────────────────────────────────────────────────────────
 
 def run_simple_hmm(cfg, train, test):
@@ -294,9 +400,12 @@ def run_simple_hmm(cfg, train, test):
     save_returns_csv(output_dir, test, strategy_returns, positions)
     save_regimes_csv(output_dir, test, regimes, n_states)
     plot_cumulative_returns(output_dir, test, strategy_returns)
+    plot_drawdown(output_dir, test, strategy_returns)
+    plot_rolling_sharpe(output_dir, test, strategy_returns)
     plot_regime_timeline(output_dir, test, regimes, n_states)
     plot_regime_characteristics(output_dir, test, regimes, n_states)
     plot_transition_matrix(output_dir, regimes, n_states)
+    plot_annual_heatmap(output_dir, test, strategy_returns)
 
     return metrics, n_trades
 
@@ -342,9 +451,12 @@ def run_hmm(cfg, train, test):
     save_returns_csv(output_dir, test, strategy_returns, positions)
     save_regimes_csv(output_dir, test, regimes, n_states)
     plot_cumulative_returns(output_dir, test, strategy_returns)
+    plot_drawdown(output_dir, test, strategy_returns)
+    plot_rolling_sharpe(output_dir, test, strategy_returns)
     plot_regime_timeline(output_dir, test, regimes, n_states)
     plot_regime_characteristics(output_dir, test, regimes, n_states)
     plot_transition_matrix(output_dir, regimes, n_states)
+    plot_annual_heatmap(output_dir, test, strategy_returns)
 
     return metrics, n_trades
 
@@ -390,9 +502,12 @@ def run_hsmm(cfg, train, test):
     save_returns_csv(output_dir, test, strategy_returns, positions)
     save_regimes_csv(output_dir, test, regimes, n_states)
     plot_cumulative_returns(output_dir, test, strategy_returns)
+    plot_drawdown(output_dir, test, strategy_returns)
+    plot_rolling_sharpe(output_dir, test, strategy_returns)
     plot_regime_timeline(output_dir, test, regimes, n_states)
     plot_regime_characteristics(output_dir, test, regimes, n_states)
     plot_transition_matrix(output_dir, regimes, n_states)
+    plot_annual_heatmap(output_dir, test, strategy_returns)
 
     return metrics, n_trades
 
@@ -467,9 +582,12 @@ def run_msgarch(cfg, train, test):
     save_returns_csv(output_dir, test, strategy_returns, positions)
     save_regimes_csv(output_dir, test, regimes_msgarch, k_regimes)
     plot_cumulative_returns(output_dir, test, strategy_returns)
+    plot_drawdown(output_dir, test, strategy_returns)
+    plot_rolling_sharpe(output_dir, test, strategy_returns)
     plot_regime_timeline(output_dir, test, regimes_msgarch, k_regimes)
     plot_regime_characteristics(output_dir, test, regimes_msgarch, k_regimes)
     plot_transition_matrix(output_dir, regimes_msgarch, k_regimes)
+    plot_annual_heatmap(output_dir, test, strategy_returns)
 
     return metrics, n_trades
 
